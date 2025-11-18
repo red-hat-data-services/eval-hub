@@ -148,7 +148,7 @@ class TestAPIEndpoints:
         """Test getting status for non-existent evaluation."""
         fake_id = "550e8400-e29b-41d4-a716-446655440000"
 
-        response = client.get(f"/api/v1/evaluations/{fake_id}")
+        response = client.get(f"/api/v1/evaluations/jobs/{fake_id}")
 
         assert response.status_code == 404
         data = response.json()
@@ -161,7 +161,7 @@ class TestAPIEndpoints:
 
         active_evaluations.clear()
 
-        response = client.get("/api/v1/evaluations")
+        response = client.get("/api/v1/evaluations/jobs")
 
         assert response.status_code == 200
         data = response.json()
@@ -170,7 +170,7 @@ class TestAPIEndpoints:
 
     def test_list_evaluations_with_filter(self, client):
         """Test listing evaluations with status filter."""
-        response = client.get("/api/v1/evaluations?status_filter=completed")
+        response = client.get("/api/v1/evaluations/jobs?status_filter=completed")
 
         assert response.status_code == 200
         data = response.json()
@@ -180,7 +180,7 @@ class TestAPIEndpoints:
         """Test canceling non-existent evaluation."""
         fake_id = "550e8400-e29b-41d4-a716-446655440000"
 
-        response = client.delete(f"/api/v1/evaluations/{fake_id}")
+        response = client.delete(f"/api/v1/evaluations/jobs/{fake_id}")
 
         assert response.status_code == 404
         data = response.json()
@@ -190,7 +190,7 @@ class TestAPIEndpoints:
         """Test getting summary for non-existent evaluation."""
         fake_id = "550e8400-e29b-41d4-a716-446655440000"
 
-        response = client.get(f"/api/v1/evaluations/{fake_id}/summary")
+        response = client.get(f"/api/v1/evaluations/jobs/{fake_id}/summary")
 
         assert response.status_code == 404
         data = response.json()
@@ -269,7 +269,7 @@ class TestAPIEndpoints:
 
     def test_request_limit_parameter(self, client):
         """Test limit parameter in list evaluations."""
-        response = client.get("/api/v1/evaluations?limit=10")
+        response = client.get("/api/v1/evaluations/jobs?limit=10")
 
         assert response.status_code == 200
         data = response.json()
