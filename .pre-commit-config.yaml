@@ -1,14 +1,6 @@
 # Pre-commit configuration for eval-hub
 repos:
-  # Black code formatting
-  - repo: https://github.com/psf/black
-    rev: 23.11.0
-    hooks:
-      - id: black
-        args: [--line-length=88]
-        exclude: ^examples/api_examples\.ipynb$
-
-  # Ruff linting and formatting
+  # Ruff linting and formatting (replaces black)
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.1.6
     hooks:
