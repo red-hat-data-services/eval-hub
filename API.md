@@ -936,8 +936,6 @@ curl -X GET "{{baseUrl}}/models?status=active"
 
 #### **DELETE** `/models/{model_id}` \- Unregister Model
 
-#### **POST** `/models/reload` \- Reload Runtime Models
-
 ---
 
 ### Server Management Endpoints
@@ -957,8 +955,6 @@ curl -X GET "{{baseUrl}}/servers"
 #### **PUT** `/servers/{server_id}` \- Update Server Configuration
 
 #### **DELETE** `/servers/{server_id}` \- Unregister Server
-
-#### **POST** `/servers/reload` \- Reload Runtime Servers
 
 ---
 
