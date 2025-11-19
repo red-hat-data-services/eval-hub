@@ -44,6 +44,9 @@
     },
     "/api/v1/evaluations/benchmarks/{provider_id}/{benchmark_id}": {
       "post": {
+        "tags": [
+          "Benchmarks"
+        ],
         "summary": "Create Single Benchmark Evaluation",
         "description": "Run an evaluation on a single benchmark (Llama Stack compatible API).",
         "operationId": "create_single_benchmark_evaluation_api_v1_evaluations_benchmarks__provider_id___benchmark_id__post",
@@ -113,11 +116,14 @@
         }
       }
     },
-    "/api/v1/evaluations": {
+    "/api/v1/evaluations/jobs": {
       "post": {
+        "tags": [
+          "Benchmarks"
+        ],
         "summary": "Create Evaluation",
         "description": "Create and execute evaluation request.",
-        "operationId": "create_evaluation_api_v1_evaluations_post",
+        "operationId": "create_evaluation_api_v1_evaluations_jobs_post",
         "parameters": [
           {
             "name": "async_mode",
@@ -164,88 +170,11 @@
             }
           }
         }
-      }
-    },
-    "/api/v1/evaluations/jobs/{id}": {
-      "get": {
-        "summary": "Get Evaluation Status",
-        "description": "Get the status of an evaluation request.",
-        "operationId": "get_evaluation_status_api_v1_evaluations_jobs__id__get",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/EvaluationResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
       },
-      "delete": {
-        "summary": "Cancel Evaluation",
-        "description": "Cancel a running evaluation.",
-        "operationId": "cancel_evaluation_api_v1_evaluations_jobs__id__delete",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/evaluations/jobs": {
       "get": {
+        "tags": [
+          "Benchmarks"
+        ],
         "summary": "List Evaluations",
         "description": "List all evaluation requests.",
         "operationId": "list_evaluations_api_v1_evaluations_jobs_get",
@@ -311,8 +240,95 @@
         }
       }
     },
+    "/api/v1/evaluations/jobs/{id}": {
+      "get": {
+        "tags": [
+          "Benchmarks"
+        ],
+        "summary": "Get Evaluation Status",
+        "description": "Get the status of an evaluation request.",
+        "operationId": "get_evaluation_status_api_v1_evaluations_jobs__id__get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EvaluationResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Benchmarks"
+        ],
+        "summary": "Cancel Evaluation",
+        "description": "Cancel a running evaluation.",
+        "operationId": "cancel_evaluation_api_v1_evaluations_jobs__id__delete",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/evaluations/jobs/{id}/summary": {
       "get": {
+        "tags": [
+          "Benchmarks"
+        ],
         "summary": "Get Evaluation Summary",
         "description": "Get a summary of an evaluation request.",
         "operationId": "get_evaluation_summary_api_v1_evaluations_jobs__id__summary_get",
@@ -440,11 +456,14 @@
         }
       }
     },
-    "/api/v1/benchmarks": {
+    "/api/v1/evaluations/benchmarks": {
       "get": {
+        "tags": [
+          "Benchmarks"
+        ],
         "summary": "List All Benchmarks",
         "description": "List all available benchmarks across providers (similar to Llama Stack format).",
-        "operationId": "list_all_benchmarks_api_v1_benchmarks_get",
+        "operationId": "list_all_benchmarks_api_v1_evaluations_benchmarks_get",
         "parameters": [
           {
             "name": "provider_id",
@@ -508,53 +527,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ListBenchmarksResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/evaluations/providers/{provider_id}/benchmarks": {
-      "get": {
-        "tags": [
-          "Providers"
-        ],
-        "summary": "List Provider Benchmarks",
-        "description": "List benchmarks for a specific provider.",
-        "operationId": "list_provider_benchmarks_api_v1_evaluations_providers__provider_id__benchmarks_get",
-        "parameters": [
-          {
-            "name": "provider_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Provider Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "array",
-                  "items": {
-                    "$ref": "#/components/schemas/BenchmarkDetail"
-                  },
-                  "title": "Response List Provider Benchmarks Api V1 Evaluations Providers  Provider Id  Benchmarks Get"
                 }
               }
             }
