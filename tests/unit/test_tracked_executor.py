@@ -1,7 +1,7 @@
 """Unit tests for TrackedExecutor base class."""
 
 from datetime import datetime
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
 
 import pytest
@@ -154,7 +154,9 @@ class TestTrackedExecutor:
         assert executor.logger is not None
 
     @pytest.mark.asyncio
-    async def test_track_start_success(self, tracked_executor, execution_context, mock_mlflow_client):
+    async def test_track_start_success(
+        self, tracked_executor, execution_context, mock_mlflow_client
+    ):
         """Test successful tracking start."""
         run_id = await tracked_executor._track_start(execution_context, "test-provider")
 
@@ -163,14 +165,20 @@ class TestTrackedExecutor:
         mock_mlflow_client.start_evaluation_run.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_track_start_no_mlflow_client(self, tracked_executor, execution_context_no_mlflow):
+    async def test_track_start_no_mlflow_client(
+        self, tracked_executor, execution_context_no_mlflow
+    ):
         """Test tracking start with no MLFlow client."""
-        run_id = await tracked_executor._track_start(execution_context_no_mlflow, "test-provider")
+        run_id = await tracked_executor._track_start(
+            execution_context_no_mlflow, "test-provider"
+        )
 
         assert run_id is None
 
     @pytest.mark.asyncio
-    async def test_track_start_exception(self, tracked_executor, execution_context, mock_mlflow_client):
+    async def test_track_start_exception(
+        self, tracked_executor, execution_context, mock_mlflow_client
+    ):
         """Test tracking start with exception."""
         mock_mlflow_client.create_experiment.side_effect = Exception("MLFlow error")
 
@@ -179,7 +187,13 @@ class TestTrackedExecutor:
         assert run_id is None
 
     @pytest.mark.asyncio
-    async def test_track_complete_success(self, tracked_executor, execution_context, sample_evaluation_result, mock_mlflow_client):
+    async def test_track_complete_success(
+        self,
+        tracked_executor,
+        execution_context,
+        sample_evaluation_result,
+        mock_mlflow_client,
+    ):
         """Test successful tracking completion."""
         result_data = sample_evaluation_result.model_dump()
         result_data["mlflow_run_id"] = "run-789"
@@ -187,24 +201,44 @@ class TestTrackedExecutor:
 
         await tracked_executor._track_complete(result_with_run_id, execution_context)
 
-        mock_mlflow_client.log_evaluation_result.assert_called_once_with(result_with_run_id)
+        mock_mlflow_client.log_evaluation_result.assert_called_once_with(
+            result_with_run_id
+        )
 
     @pytest.mark.asyncio
-    async def test_track_complete_no_mlflow_client(self, tracked_executor, execution_context_no_mlflow, sample_evaluation_result):
+    async def test_track_complete_no_mlflow_client(
+        self, tracked_executor, execution_context_no_mlflow, sample_evaluation_result
+    ):
         """Test tracking completion with no MLFlow client."""
         # Should not raise an exception
-        await tracked_executor._track_complete(sample_evaluation_result, execution_context_no_mlflow)
+        await tracked_executor._track_complete(
+            sample_evaluation_result, execution_context_no_mlflow
+        )
 
     @pytest.mark.asyncio
-    async def test_track_complete_no_run_id(self, tracked_executor, execution_context, sample_evaluation_result, mock_mlflow_client):
+    async def test_track_complete_no_run_id(
+        self,
+        tracked_executor,
+        execution_context,
+        sample_evaluation_result,
+        mock_mlflow_client,
+    ):
         """Test tracking completion with no run ID."""
         # Should not raise an exception and should not call MLFlow
-        await tracked_executor._track_complete(sample_evaluation_result, execution_context)
+        await tracked_executor._track_complete(
+            sample_evaluation_result, execution_context
+        )
 
         mock_mlflow_client.log_evaluation_result.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_track_complete_exception(self, tracked_executor, execution_context, sample_evaluation_result, mock_mlflow_client):
+    async def test_track_complete_exception(
+        self,
+        tracked_executor,
+        execution_context,
+        sample_evaluation_result,
+        mock_mlflow_client,
+    ):
         """Test tracking completion with exception."""
         result_data = sample_evaluation_result.model_dump()
         result_data["mlflow_run_id"] = "run-789"
@@ -215,7 +249,9 @@ class TestTrackedExecutor:
         await tracked_executor._track_complete(result_with_run_id, execution_context)
 
     @pytest.mark.asyncio
-    async def test_track_failure_with_existing_run_id(self, tracked_executor, execution_context, mock_mlflow_client):
+    async def test_track_failure_with_existing_run_id(
+        self, tracked_executor, execution_context, mock_mlflow_client
+    ):
         """Test tracking failure with existing run ID."""
         existing_run_id = "existing-run-123"
 
@@ -233,7 +269,9 @@ class TestTrackedExecutor:
         assert call_args.mlflow_run_id == existing_run_id
 
     @pytest.mark.asyncio
-    async def test_track_failure_create_new_run_id(self, tracked_executor, execution_context, mock_mlflow_client):
+    async def test_track_failure_create_new_run_id(
+        self, tracked_executor, execution_context, mock_mlflow_client
+    ):
         """Test tracking failure creating new run ID."""
         result_run_id = await tracked_executor._track_failure(
             execution_context, "test-provider", "Test error", None
@@ -245,7 +283,9 @@ class TestTrackedExecutor:
         mock_mlflow_client.log_evaluation_result.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_track_failure_no_mlflow_client(self, tracked_executor, execution_context_no_mlflow):
+    async def test_track_failure_no_mlflow_client(
+        self, tracked_executor, execution_context_no_mlflow
+    ):
         """Test tracking failure with no MLFlow client."""
         result_run_id = await tracked_executor._track_failure(
             execution_context_no_mlflow, "test-provider", "Test error", "run-123"
@@ -254,7 +294,9 @@ class TestTrackedExecutor:
         assert result_run_id == "run-123"  # Returns the provided run_id
 
     @pytest.mark.asyncio
-    async def test_track_failure_exception(self, tracked_executor, execution_context, mock_mlflow_client):
+    async def test_track_failure_exception(
+        self, tracked_executor, execution_context, mock_mlflow_client
+    ):
         """Test tracking failure with exception."""
         mock_mlflow_client.log_evaluation_result.side_effect = Exception("MLFlow error")
 
@@ -265,7 +307,9 @@ class TestTrackedExecutor:
         # Should still return the run_id even if logging fails
         assert result_run_id == "run-123"
 
-    def test_with_tracking_with_run_id(self, tracked_executor, sample_evaluation_result):
+    def test_with_tracking_with_run_id(
+        self, tracked_executor, sample_evaluation_result
+    ):
         """Test _with_tracking with valid run ID."""
         run_id = "test-run-456"
 
@@ -277,7 +321,9 @@ class TestTrackedExecutor:
         assert result.status == sample_evaluation_result.status
         assert result.metrics == sample_evaluation_result.metrics
 
-    def test_with_tracking_with_none_run_id(self, tracked_executor, sample_evaluation_result):
+    def test_with_tracking_with_none_run_id(
+        self, tracked_executor, sample_evaluation_result
+    ):
         """Test _with_tracking with None run ID."""
         result = tracked_executor._with_tracking(sample_evaluation_result, None)
 
@@ -285,7 +331,9 @@ class TestTrackedExecutor:
         assert result.evaluation_id == sample_evaluation_result.evaluation_id
         assert result.provider_id == sample_evaluation_result.provider_id
 
-    def test_with_tracking_preserves_all_fields(self, tracked_executor, sample_evaluation_result):
+    def test_with_tracking_preserves_all_fields(
+        self, tracked_executor, sample_evaluation_result
+    ):
         """Test that _with_tracking preserves all original fields."""
         run_id = "test-run-789"
 
@@ -311,7 +359,9 @@ class TestTrackedExecutorIntegration:
     """Integration tests for TrackedExecutor workflow."""
 
     @pytest.mark.asyncio
-    async def test_full_tracking_workflow_success(self, tracked_executor, execution_context, mock_mlflow_client):
+    async def test_full_tracking_workflow_success(
+        self, tracked_executor, execution_context, mock_mlflow_client
+    ):
         """Test full successful tracking workflow."""
         # Start tracking
         run_id = await tracked_executor._track_start(execution_context, "test-provider")
@@ -339,7 +389,9 @@ class TestTrackedExecutorIntegration:
         mock_mlflow_client.log_evaluation_result.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_full_tracking_workflow_failure(self, tracked_executor, execution_context, mock_mlflow_client):
+    async def test_full_tracking_workflow_failure(
+        self, tracked_executor, execution_context, mock_mlflow_client
+    ):
         """Test full tracking workflow with failure."""
         # Start tracking
         run_id = await tracked_executor._track_start(execution_context, "test-provider")
