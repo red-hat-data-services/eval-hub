@@ -22,10 +22,11 @@ from ..models.nemo import (
     NemoEvaluationTarget,
 )
 from ..utils import safe_duration_seconds, utcnow
-from .base import ExecutionContext, Executor
+from .base import ExecutionContext
+from .tracked import TrackedExecutor
 
 
-class NemoEvaluatorExecutor(Executor):
+class NemoEvaluatorExecutor(TrackedExecutor):
     """Executor for communicating with remote NeMo Evaluator containers."""
 
     def __init__(self, backend_config: dict[str, Any]):
@@ -108,6 +109,9 @@ class NemoEvaluatorExecutor(Executor):
             benchmark=context.benchmark_spec.name,
         )
 
+        # Start experiment tracking
+        run_id = await self._track_start(context, "nemo_evaluator")
+
         try:
             # Report progress start
             if progress_callback:
@@ -144,14 +148,18 @@ class NemoEvaluatorExecutor(Executor):
             # Convert NeMo result to eval-hub format
             eval_result = await self._convert_nemo_result_to_eval_hub(result, context)
 
+            # Attach tracking ID and log completion
+            final_result = self._with_tracking(eval_result, run_id)
+            await self._track_complete(final_result, context)
+
             self.logger.info(
                 "NeMo Evaluator execution completed",
                 evaluation_id=str(context.evaluation_id),
                 benchmark=context.benchmark_spec.name,
-                status=eval_result.status,
+                status=final_result.status,
             )
 
-            return eval_result
+            return final_result
 
         except Exception as e:
             self.logger.error(
@@ -159,6 +167,11 @@ class NemoEvaluatorExecutor(Executor):
                 evaluation_id=str(context.evaluation_id),
                 benchmark=context.benchmark_spec.name,
                 error=str(e),
+            )
+
+            # Log failure to tracking
+            failed_run_id = await self._track_failure(
+                context, "nemo_evaluator", str(e), run_id
             )
 
             return EvaluationResult(
@@ -171,7 +184,7 @@ class NemoEvaluatorExecutor(Executor):
                 started_at=context.started_at,
                 completed_at=utcnow(),
                 duration_seconds=safe_duration_seconds(utcnow(), context.started_at),
-                mlflow_run_id=None,
+                mlflow_run_id=failed_run_id,
             )
 
     async def cleanup(self) -> None:

@@ -17,13 +17,13 @@ from ..core.logging import get_logger
 from ..models.evaluation import (
     EvaluationResult,
     EvaluationStatus,
-    ExperimentConfig,
 )
 from ..utils import parse_iso_datetime, safe_duration_seconds, utcnow
-from .base import ExecutionContext, Executor
+from .base import ExecutionContext
+from .tracked import TrackedExecutor
 
 
-class LMEvalExecutor(Executor):
+class LMEvalExecutor(TrackedExecutor):
     """Executor for running evaluations using lm-evaluation-harness."""
 
     @staticmethod
@@ -153,6 +153,9 @@ class LMEvalExecutor(Executor):
             model=model,
         )
 
+        # Start experiment tracking
+        run_id = await self._track_start(context, "lm_evaluation_harness")
+
         try:
             # Report progress start
             if progress_callback:
@@ -196,10 +199,11 @@ class LMEvalExecutor(Executor):
                     cr_name=cr_name,
                 )
 
-                # Poll for completion and retrieve results
-                return await self._wait_for_cr_completion_and_get_results(
-                    cr_name, context, progress_callback
+                # Poll for completion and retrieve results (with tracking)
+                cr_result = await self._wait_for_cr_completion_and_get_results(
+                    cr_name, context, progress_callback, run_id
                 )
+                return cr_result
 
             # Fallback to local execution if CR deployment is disabled
             if progress_callback:
@@ -228,14 +232,18 @@ class LMEvalExecutor(Executor):
             # Convert result to eval-hub format
             eval_result = await self._convert_lmeval_result_to_eval_hub(result, context)
 
+            # Attach tracking ID and log completion
+            final_result = self._with_tracking(eval_result, run_id)
+            await self._track_complete(final_result, context)
+
             self.logger.info(
                 "LM Evaluation Harness execution completed",
                 evaluation_id=str(context.evaluation_id),
                 benchmark=context.benchmark_spec.name,
-                status=eval_result.status,
+                status=final_result.status,
             )
 
-            return eval_result
+            return final_result
 
         except Exception as e:
             self.logger.error(
@@ -245,83 +253,10 @@ class LMEvalExecutor(Executor):
                 error=str(e),
             )
 
-            # Create MLFlow run for failed evaluation
-            mlflow_run_id = None
-            if context.mlflow_client:
-                try:
-                    from ..models.evaluation import (
-                        EvaluationRequest,
-                        EvaluationSpec,
-                        Model,
-                    )
-
-                    model_obj = Model(
-                        url=context.model_url,
-                        name=context.model_name,
-                    )
-
-                    evaluation_spec = EvaluationSpec(
-                        id=context.evaluation_id,
-                        name=f"lmeval_{context.benchmark_spec.name}_{context.model_name}",
-                        description=None,
-                        model=model_obj,
-                        collection_id=None,
-                        risk_category=None,
-                        priority=1,
-                    )
-
-                    # Use the original experiment name if available, otherwise generate one
-                    experiment_name = (
-                        context.experiment_name
-                        or f"lmeval_{context.benchmark_spec.name}"
-                    )
-                    evaluation_request = EvaluationRequest(
-                        evaluations=[evaluation_spec],
-                        experiment=ExperimentConfig(name=experiment_name),
-                        callback_url=None,
-                        created_at=context.started_at,
-                    )
-
-                    experiment_id = await context.mlflow_client.create_experiment(
-                        evaluation_request
-                    )
-                    mlflow_run_id = await context.mlflow_client.start_evaluation_run(
-                        experiment_id=experiment_id,
-                        evaluation=evaluation_spec,
-                        backend_name="lm_evaluation_harness",
-                        benchmark_name=context.benchmark_spec.name,
-                    )
-
-                    # Log failure details to MLFlow
-                    failed_result = EvaluationResult(
-                        evaluation_id=context.evaluation_id,
-                        provider_id="lm_evaluation_harness",
-                        benchmark_id=context.benchmark_spec.name,
-                        benchmark_name=context.benchmark_spec.name,
-                        status=EvaluationStatus.FAILED,
-                        error_message=str(e),
-                        started_at=context.started_at,
-                        completed_at=utcnow(),
-                        duration_seconds=0.0,
-                        mlflow_run_id=mlflow_run_id,
-                        metrics={},
-                        artifacts={},
-                    )
-
-                    await context.mlflow_client.log_evaluation_result(failed_result)
-
-                    self.logger.info(
-                        "Logged failed evaluation to MLFlow",
-                        evaluation_id=str(context.evaluation_id),
-                        run_id=mlflow_run_id,
-                    )
-
-                except Exception as mlflow_error:
-                    self.logger.error(
-                        "Failed to create MLFlow run for failed evaluation",
-                        evaluation_id=str(context.evaluation_id),
-                        error=str(mlflow_error),
-                    )
+            # Use common error tracking (replaces all the duplicate MLFlow code!)
+            failed_run_id = await self._track_failure(
+                context, "lm_evaluation_harness", str(e), run_id
+            )
 
             return EvaluationResult(
                 evaluation_id=context.evaluation_id,
@@ -333,7 +268,7 @@ class LMEvalExecutor(Executor):
                 started_at=context.started_at,
                 completed_at=utcnow(),
                 duration_seconds=safe_duration_seconds(utcnow(), context.started_at),
-                mlflow_run_id=mlflow_run_id,
+                mlflow_run_id=failed_run_id,
             )
 
     async def cleanup(self) -> None:
@@ -747,6 +682,7 @@ class LMEvalExecutor(Executor):
         cr_name: str,
         context: ExecutionContext,
         progress_callback: Callable[[str, float, str], None] | None = None,
+        run_id: str | None = None,
     ) -> EvaluationResult:
         """Wait for CR to complete and retrieve results."""
         if not self.k8s_client:
@@ -815,65 +751,16 @@ class LMEvalExecutor(Executor):
                 # Check if succeeded or failed
                 reason = status.get("reason", "")
                 if reason == "Succeeded":
-                    # Retrieve and parse results
-                    return await self._parse_cr_results(cr, context)
+                    # Retrieve and parse results (with tracking)
+                    return await self._parse_cr_results(cr, context, run_id)
                 else:
                     # Job failed
                     message = status.get("message", "Job failed")
 
-                    # Create MLFlow run for failed evaluation
-                    mlflow_run_id = None
-                    if context.mlflow_client:
-                        try:
-                            from ..models.evaluation import (
-                                EvaluationRequest,
-                                EvaluationSpec,
-                                Model,
-                            )
-
-                            model_obj = Model(
-                                url=context.model_url,
-                                name=context.model_name,
-                            )
-
-                            evaluation_spec = EvaluationSpec(
-                                id=context.evaluation_id,
-                                name=f"lmeval_{context.benchmark_spec.name}_{context.model_name}",
-                                description=None,
-                                model=model_obj,
-                                collection_id=None,
-                                risk_category=None,
-                                priority=1,
-                            )
-
-                            evaluation_request = EvaluationRequest(
-                                evaluations=[evaluation_spec],
-                                experiment=ExperimentConfig(
-                                    name=f"lmeval_{context.benchmark_spec.name}"
-                                ),
-                                callback_url=None,
-                                created_at=context.started_at,
-                            )
-
-                            experiment_id = (
-                                await context.mlflow_client.create_experiment(
-                                    evaluation_request
-                                )
-                            )
-                            mlflow_run_id = (
-                                await context.mlflow_client.start_evaluation_run(
-                                    experiment_id=experiment_id,
-                                    evaluation=evaluation_spec,
-                                    backend_name="lm_evaluation_harness",
-                                    benchmark_name=context.benchmark_spec.name,
-                                )
-                            )
-                        except Exception as e:
-                            self.logger.error(
-                                "Failed to create MLFlow run for failed evaluation",
-                                evaluation_id=str(context.evaluation_id),
-                                error=str(e),
-                            )
+                    # Use common error tracking (replaces duplicate MLFlow code!)
+                    failed_run_id = await self._track_failure(
+                        context, "lm_evaluation_harness", message, run_id
+                    )
 
                     return EvaluationResult(
                         evaluation_id=context.evaluation_id,
@@ -885,14 +772,17 @@ class LMEvalExecutor(Executor):
                         started_at=context.started_at,
                         completed_at=utcnow(),
                         duration_seconds=elapsed,
-                        mlflow_run_id=mlflow_run_id,
+                        mlflow_run_id=failed_run_id,
                     )
 
             # Wait before next poll
             await asyncio.sleep(poll_interval)
 
     async def _parse_cr_results(
-        self, cr: dict[str, Any], context: ExecutionContext
+        self,
+        cr: dict[str, Any],
+        context: ExecutionContext,
+        run_id: str | None = None,
     ) -> EvaluationResult:
         """Parse results from completed CR and convert to EvaluationResult."""
         status = cr.get("status", {})
@@ -955,95 +845,8 @@ class LMEvalExecutor(Executor):
             if isinstance(key, str):
                 metrics_typed[key] = value
 
-        # Create MLFlow run if MLFlow client is available
-        mlflow_run_id = None
-        if context.mlflow_client:
-            try:
-                # Create or get experiment
-                # Create a minimal evaluation request for experiment creation
-                from ..models.evaluation import EvaluationRequest, EvaluationSpec, Model
-
-                model_obj = Model(
-                    url=context.model_url,
-                    name=context.model_name,
-                )
-
-                evaluation_spec = EvaluationSpec(
-                    id=context.evaluation_id,
-                    name=f"lmeval_{context.benchmark_spec.name}_{context.model_name}",
-                    description=None,
-                    model=model_obj,
-                    collection_id=None,
-                    risk_category=None,
-                    priority=1,
-                )
-
-                # Create a minimal request for experiment creation
-                # Use the original experiment name if available, otherwise generate one
-                experiment_name = (
-                    context.experiment_name or f"lmeval_{context.benchmark_spec.name}"
-                )
-                evaluation_request = EvaluationRequest(
-                    evaluations=[evaluation_spec],
-                    experiment=ExperimentConfig(name=experiment_name),
-                    callback_url=None,
-                    created_at=context.started_at,
-                )
-
-                experiment_id = await context.mlflow_client.create_experiment(
-                    evaluation_request
-                )
-
-                # Create MLFlow run
-                mlflow_run_id = await context.mlflow_client.start_evaluation_run(
-                    experiment_id=experiment_id,
-                    evaluation=evaluation_spec,
-                    backend_name="lm_evaluation_harness",
-                    benchmark_name=context.benchmark_spec.name,
-                )
-
-                self.logger.info(
-                    "Created MLFlow run for LMEval result",
-                    evaluation_id=str(context.evaluation_id),
-                    run_id=mlflow_run_id,
-                    experiment_id=experiment_id,
-                )
-
-                # Log metrics and results to MLFlow
-                temp_result = EvaluationResult(
-                    evaluation_id=context.evaluation_id,
-                    provider_id="lm_evaluation_harness",
-                    benchmark_id=context.benchmark_spec.name,
-                    benchmark_name=context.benchmark_spec.name,
-                    status=EvaluationStatus.COMPLETED,
-                    metrics=metrics_typed,
-                    artifacts={},
-                    started_at=context.started_at,
-                    completed_at=completed_at or utcnow(),
-                    duration_seconds=duration_seconds,
-                    error_message=None,
-                    mlflow_run_id=mlflow_run_id,
-                )
-
-                await context.mlflow_client.log_evaluation_result(temp_result)
-
-                self.logger.info(
-                    "Logged metrics to MLFlow",
-                    evaluation_id=str(context.evaluation_id),
-                    run_id=mlflow_run_id,
-                    metrics_count=len(metrics_typed),
-                )
-
-            except Exception as e:
-                self.logger.error(
-                    "Failed to create MLFlow run",
-                    evaluation_id=str(context.evaluation_id),
-                    error=str(e),
-                )
-                # Don't fail the evaluation if MLFlow fails
-                pass
-
-        return EvaluationResult(  # type: ignore[call-arg]
+        # Create evaluation result
+        eval_result = EvaluationResult(  # type: ignore[call-arg]
             evaluation_id=context.evaluation_id,
             provider_id="lm_evaluation_harness",
             benchmark_id=context.benchmark_spec.name,
@@ -1055,7 +858,7 @@ class LMEvalExecutor(Executor):
             completed_at=completed_at or utcnow(),
             duration_seconds=duration_seconds,
             error_message=None,
-            mlflow_run_id=mlflow_run_id,
+            mlflow_run_id=None,  # Will be set by tracking
             metadata={
                 "cr_name": cr["metadata"]["name"],
                 "namespace": cr["metadata"]["namespace"],
@@ -1063,6 +866,12 @@ class LMEvalExecutor(Executor):
                 "raw_results": results_data,
             },
         )
+
+        # Use tracking methods (replaces all the duplicate MLFlow code!)
+        final_result = self._with_tracking(eval_result, run_id)
+        await self._track_complete(final_result, context)
+
+        return final_result
 
     def get_cr_status(
         self, cr_name: str, namespace: str | None = None
