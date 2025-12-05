@@ -247,11 +247,12 @@ class TestProviderEndpointsIntegration:
 
         providers_data = response.json()
         # Update expectations to match the actual data being loaded
-        assert providers_data["total_providers"] == 3
-        assert providers_data["total_benchmarks"] == 176
+        assert providers_data["total_providers"] == 4
+        assert providers_data["total_benchmarks"] == 186
 
         provider_ids = [p["provider_id"] for p in providers_data["providers"]]
         assert "lm_evaluation_harness" in provider_ids
+        assert "lighteval" in provider_ids
         assert "ragas" in provider_ids
         assert "garak" in provider_ids
 
@@ -272,12 +273,12 @@ class TestProviderEndpointsIntegration:
 
         benchmarks_data = response.json()
         assert (
-            benchmarks_data["total_count"] == 176
-        )  # Real data has 176 total benchmarks
-        assert len(benchmarks_data["benchmarks"]) == 176
+            benchmarks_data["total_count"] == 186
+        )  # Real data has 186 total benchmarks (176 + 10 from lighteval)
+        assert len(benchmarks_data["benchmarks"]) == 186
         assert (
-            len(benchmarks_data["providers_included"]) == 3
-        )  # Real data has 3 providers
+            len(benchmarks_data["providers_included"]) == 4
+        )  # Real data has 4 providers (lm_eval, lighteval, ragas, garak)
 
         # Step 4: Get provider-specific benchmarks
         response = integration_client.get(
@@ -323,7 +324,9 @@ class TestProviderEndpointsIntegration:
         assert response.status_code == 200
         data = response.json()
         safety_benchmarks = data["benchmarks"]
-        assert len(safety_benchmarks) == 16  # Real data has 16 safety benchmarks
+        assert (
+            len(safety_benchmarks) == 17
+        )  # Real data has 17 safety benchmarks (16 + lighteval truthfulqa)
         assert all(b["category"] == "safety" for b in safety_benchmarks)
 
         # Test filter by tags
@@ -333,7 +336,9 @@ class TestProviderEndpointsIntegration:
         assert response.status_code == 200
         data = response.json()
         reasoning_benchmarks = data["benchmarks"]
-        assert len(reasoning_benchmarks) == 16  # Real data has 16 reasoning benchmarks
+        assert (
+            len(reasoning_benchmarks) == 21
+        )  # Real data has 21 reasoning benchmarks (16 + 5 from lighteval)
         assert all("reasoning" in b["tags"] for b in reasoning_benchmarks)
 
         # Test multiple filters

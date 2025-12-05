@@ -211,3 +211,9 @@ __marimo__/
 .idea/modules.xml
 .idea/vcs.xml
 .idea/inspectionProfiles/profiles_settings.xml
+
+# KFP generated pipeline files
+containers/**/*_pipeline.yaml
+
+# macOS
+.DS_Store

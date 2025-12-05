@@ -289,6 +289,7 @@ Risk categories automatically select appropriate benchmarks:
 
 Supported backends:
 - **lm-evaluation-harness**: Standard language model evaluation
+- **Lighteval**: Lightweight evaluation via Kubeflow Pipelines
 - **GuideLL**: Performance and latency evaluation
 - **NeMo Evaluator**: Remote @Evaluator containers for distributed evaluation
 - **Custom**: User-defined evaluation backends
@@ -353,6 +354,62 @@ The NeMo Evaluator Executor communicates with remote containers using HTTP/JSON 
 - **Resource Planning**: Consider CPU, memory, network bandwidth, and storage requirements
 
 See `examples/configure_executors.py` for Python-only configuration examples.
+
+#### Lighteval via Kubeflow Pipelines
+
+The eval-hub supports Lighteval framework integration through Kubeflow Pipelines (KFP), providing a lightweight and flexible evaluation solution. Lighteval evaluations run as containerized KFP components with automatic artifact management and ML metadata tracking.
+
+**Key Benefits**:
+- **Lightweight**: Minimal dependencies and fast startup
+- **KFP-Native**: Automatic artifact management and lineage tracking
+- **Flexible**: Supports various model endpoints (OpenAI-compatible APIs)
+- **Containerized**: Runs in isolated containers with resource management
+
+**Configuration Example**:
+
+```python
+{
+  "model": {
+    "url": "https://api.openai.com/v1",
+    "name": "gpt-4"
+  },
+  "benchmarks": [
+    {
+      "benchmark_id": "mmlu",
+      "provider_id": "lighteval",
+      "config": {
+        "num_fewshot": 5,
+        "limit": 100,
+        "batch_size": 1
+      }
+    }
+  ],
+  "experiment": {
+    "name": "gpt4-lighteval-evaluation"
+  }
+}
+```
+
+**Supported Benchmarks**:
+- **Knowledge**: MMLU, ARC, OpenBookQA
+- **Reasoning**: HellaSwag, Winogrande, PIQA, TruthfulQA
+- **Math**: GSM8K
+- **Code**: HumanEval
+- **Reading**: BoolQ
+
+**Backend Specification**:
+
+When using Lighteval via KFP, the backend type should be `kubeflow-pipelines` with `framework: "lighteval"`:
+
+```python
+{
+  "type": "kubeflow-pipelines",
+  "framework": "lighteval",
+  "kfp_endpoint": "http://ml-pipeline.kubeflow.svc:8888"
+}
+```
+
+The adapter automatically handles transformation between eval-hub's format and Lighteval's expected inputs, executes the evaluation in a KFP pipeline, and parses results back to eval-hub format.
 
 ## Monitoring
 
