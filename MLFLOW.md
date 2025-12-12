@@ -13,9 +13,9 @@ Concise guide for configuring MLFlow integration and understanding experiment tr
 
 ### Deployment Configuration
 
-**Docker/Container:**
+**Podman/Container:**
 ```bash
-docker run -p 8000:8000 \
+podman run -p 8000:8000 \
   -e MLFLOW_TRACKING_URI=http://mlflow:5000 \
   eval-hub:latest
 ```

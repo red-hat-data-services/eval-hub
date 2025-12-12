@@ -24,7 +24,7 @@ cd "$(dirname "$0")"
 
 # Build container
 echo -e "${YELLOW}Building container image...${NC}"
-docker build \
+podman build \
     --platform "${PLATFORM}" \
     -t "${IMAGE_NAME}:${VERSION}" \
     -t "${IMAGE_NAME}:latest" \
@@ -40,8 +40,8 @@ fi
 # Optional: Push to registry
 if [ "$PUSH" = "true" ]; then
     echo -e "${YELLOW}Pushing container to registry...${NC}"
-    docker push "${IMAGE_NAME}:${VERSION}"
-    docker push "${IMAGE_NAME}:latest"
+    podman push "${IMAGE_NAME}:${VERSION}"
+    podman push "${IMAGE_NAME}:latest"
 
     if [ $? -eq 0 ]; then
         echo -e "${GREEN}✅ Container pushed successfully${NC}"
@@ -54,7 +54,7 @@ fi
 echo ""
 echo -e "${GREEN}Build complete!${NC}"
 echo "To run locally:"
-echo "  docker run -it ${IMAGE_NAME}:${VERSION} --help"
+echo "  podman run -it ${IMAGE_NAME}:${VERSION} --help"
 echo ""
 echo "To push to registry:"
 echo "  PUSH=true ./build.sh"
