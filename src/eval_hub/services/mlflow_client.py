@@ -373,7 +373,7 @@ class MLFlowClient:
 
     def _generate_experiment_name(self, request: EvaluationRequest) -> str:
         """Generate a unique experiment name for the request."""
-        if request.experiment.name:
+        if request.experiment and request.experiment.name:
             base_name = request.experiment.name
         else:
             # Generate name based on timestamp and request content
