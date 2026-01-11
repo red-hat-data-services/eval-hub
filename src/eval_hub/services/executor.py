@@ -4,6 +4,7 @@ import asyncio
 import builtins
 import time
 from collections.abc import Callable
+from typing import Any
 from uuid import UUID
 
 from ..core.config import Settings
@@ -676,6 +677,203 @@ class EvaluationExecutor:
     async def get_active_evaluations(self) -> list[TaskInfo]:
         """Get list of currently active evaluations."""
         return list(self.active_tasks.values())
+
+    async def check_and_update_evaluation_status(
+        self, evaluation_id: str, current_response: Any
+    ) -> Any | None:
+        """Check if a pending evaluation has completed and update its status.
+
+        Args:
+            evaluation_id: The evaluation ID to check
+            current_response: Current EvaluationJobResource response
+
+        Returns:
+            Updated response if job completed, None if still pending
+        """
+        try:
+            # Extract job information from current response artifacts
+            artifacts = (
+                getattr(current_response.result, "artifacts", {})
+                if current_response.result
+                else {}
+            )
+            job_name = artifacts.get("job_name")
+            namespace = artifacts.get("namespace")
+
+            if not job_name or not namespace:
+                # Can't check status without job info
+                return None
+
+            # Create a temporary LMEval executor to check status
+            # Note: This is a bit of a hack, but we need to check the CR status somehow
+            from ..executors.lmeval import LMEvalExecutor
+
+            # Create minimal config for status checking
+            temp_config = {
+                "namespace": namespace,
+                "deploy_crs": True,
+                "model": "temp",  # Required but not used for status checking
+            }
+
+            # Create temporary executor just for status checking
+            temp_executor = LMEvalExecutor(temp_config)
+
+            # Check if CR has completed
+            cr_status = temp_executor.get_cr_status(job_name, namespace)
+            if not cr_status:
+                # CR not found or error - keep pending
+                return None
+
+            if (
+                cr_status.get("state") == "Complete"
+                and cr_status.get("reason") == "Succeeded"
+            ):
+                # Job completed successfully - fetch results
+                cr_results = temp_executor.get_cr_results(job_name, namespace)
+                if cr_results:
+                    # Parse results and create updated response
+                    # Extract metrics from results
+                    metrics: dict[str, float | int | str] = {}
+                    results_data = cr_results.get("results", {})
+                    for task_name, task_results in results_data.items():
+                        if isinstance(task_results, dict) and isinstance(
+                            task_name, str
+                        ):
+                            for metric_name, metric_value in task_results.items():
+                                if isinstance(
+                                    metric_value, (int, float)
+                                ) and isinstance(metric_name, str):
+                                    full_metric_name = (
+                                        f"{task_name}_{metric_name}"
+                                        if len(results_data) > 1
+                                        else metric_name
+                                    )
+                                    metrics[full_metric_name] = metric_value
+
+                    # Create updated response with completed status
+                    from ..models.evaluation import EvaluationResult, EvaluationStatus
+                    from ..utils import (
+                        parse_iso_datetime,
+                        safe_duration_seconds,
+                        utcnow,
+                    )
+
+                    # Parse completion time
+                    completed_at = utcnow()
+                    completed_time_str = cr_status.get("completeTime")
+                    if completed_time_str:
+                        try:
+                            completed_at = parse_iso_datetime(completed_time_str)
+                        except (ValueError, AttributeError):
+                            completed_at = utcnow()
+
+                    # Calculate duration
+                    started_at = (
+                        current_response.result.started_at
+                        if current_response.result
+                        else utcnow()
+                    )
+                    duration_seconds = safe_duration_seconds(completed_at, started_at)
+
+                    # Create updated result
+                    updated_result = EvaluationResult(
+                        evaluation_id=current_response.result.evaluation_id,
+                        provider_id=current_response.result.provider_id,
+                        benchmark_id=current_response.result.benchmark_id,
+                        benchmark_name=current_response.result.benchmark_name,
+                        status=EvaluationStatus.COMPLETED,
+                        metrics=metrics,
+                        artifacts={
+                            "job_name": job_name,
+                            "namespace": namespace,
+                            "cr_results": str(cr_results),
+                        },
+                        started_at=started_at,
+                        completed_at=completed_at,
+                        duration_seconds=duration_seconds,
+                        error_message=None,
+                        mlflow_run_id=current_response.result.mlflow_run_id,
+                    )
+
+                    # Create updated response
+                    from copy import deepcopy
+
+                    updated_response = deepcopy(current_response)
+                    updated_response.result = updated_result
+                    updated_response.status.state = "completed"
+                    updated_response.status.message = (
+                        "Evaluation completed successfully"
+                    )
+
+                    self.logger.info(
+                        "Updated evaluation status from pending to completed",
+                        evaluation_id=evaluation_id,
+                        job_name=job_name,
+                        namespace=namespace,
+                    )
+
+                    return updated_response
+
+            elif (
+                cr_status.get("state") == "Complete"
+                and cr_status.get("reason") != "Succeeded"
+            ):
+                # Job failed
+                error_message = cr_status.get("message", "Job failed")
+
+                from copy import deepcopy
+
+                from ..models.evaluation import EvaluationResult, EvaluationStatus
+                from ..utils import safe_duration_seconds, utcnow
+
+                # Create failed result
+                started_at = (
+                    current_response.result.started_at
+                    if current_response.result
+                    else utcnow()
+                )
+                failed_result = EvaluationResult(
+                    evaluation_id=current_response.result.evaluation_id,
+                    provider_id=current_response.result.provider_id,
+                    benchmark_id=current_response.result.benchmark_id,
+                    benchmark_name=current_response.result.benchmark_name,
+                    status=EvaluationStatus.FAILED,
+                    metrics={},
+                    artifacts={"job_name": job_name, "namespace": namespace},
+                    started_at=started_at,
+                    completed_at=utcnow(),
+                    duration_seconds=safe_duration_seconds(utcnow(), started_at),
+                    error_message=error_message,
+                    mlflow_run_id=current_response.result.mlflow_run_id,
+                )
+
+                # Create updated response
+                updated_response = deepcopy(current_response)
+                updated_response.result = failed_result
+                updated_response.status.state = "failed"
+                updated_response.status.message = error_message
+
+                self.logger.info(
+                    "Updated evaluation status from pending to failed",
+                    evaluation_id=evaluation_id,
+                    job_name=job_name,
+                    namespace=namespace,
+                    error=error_message,
+                )
+
+                return updated_response
+
+            # Still running - return None (no update)
+            return None
+
+        except Exception as e:
+            self.logger.error(
+                "Error checking evaluation status",
+                evaluation_id=evaluation_id,
+                error=str(e),
+            )
+            # Don't update on error - keep current state
+            return None
 
     async def cancel_evaluation(self, evaluation_id: UUID) -> bool:
         """Cancel a running evaluation."""
