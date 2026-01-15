@@ -15,8 +15,8 @@ WORKDIR /app
 # Copy dependency files first for better caching
 COPY pyproject.toml README.md requirements.txt ./
 
-# Install dependencies (compatible with hermetic/cachi2 builds)
-RUN . /cachi2/cachi2.env && \
+# Install dependencies (compatible with both hermetic/cachi2 and regular builds)
+RUN if [ -f /cachi2/cachi2.env ]; then . /cachi2/cachi2.env; fi && \
     pip install -r requirements.txt && \
     pip install --no-deps -e .
 
@@ -39,8 +39,8 @@ WORKDIR /app
 COPY --from=builder --chown=1001:0 /app/src ./src
 COPY --from=builder --chown=1001:0 /app/pyproject.toml /app/README.md /app/requirements.txt ./
 
-# Install the package in production stage (compatible with hermetic/cachi2 builds)
-RUN . /cachi2/cachi2.env && \
+# Install the package in production stage (compatible with both hermetic/cachi2 and regular builds)
+RUN if [ -f /cachi2/cachi2.env ]; then . /cachi2/cachi2.env; fi && \
     pip install -r requirements.txt && \
     pip install --no-deps -e .
 
