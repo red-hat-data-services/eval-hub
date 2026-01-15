@@ -9,17 +9,16 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Install uv (system dependencies already available in UBI9 Python image)
-RUN pip install uv
-
 # Set work directory
 WORKDIR /app
 
 # Copy dependency files first for better caching
-COPY pyproject.toml README.md ./
+COPY pyproject.toml README.md requirements.txt ./
 
-# Install dependencies directly (no venv needed in container)
-RUN uv pip install --system --python /opt/app-root/bin/python3 -e .
+# Install dependencies (compatible with hermetic/cachi2 builds)
+RUN . /cachi2/cachi2.env && \
+    pip install -r requirements.txt && \
+    pip install --no-deps -e .
 
 # Copy source code after dependencies are installed
 COPY src/ ./src/
@@ -38,10 +37,12 @@ WORKDIR /app
 
 # Copy application code from builder stage (using numeric UID 1001 for UBI9 default user)
 COPY --from=builder --chown=1001:0 /app/src ./src
-COPY --from=builder --chown=1001:0 /app/pyproject.toml /app/README.md ./
+COPY --from=builder --chown=1001:0 /app/pyproject.toml /app/README.md /app/requirements.txt ./
 
-# Install the package in production stage
-RUN /opt/app-root/bin/python3 -m pip install -e .
+# Install the package in production stage (compatible with hermetic/cachi2 builds)
+RUN . /cachi2/cachi2.env && \
+    pip install -r requirements.txt && \
+    pip install --no-deps -e .
 
 # Create required directories and set permissions
 RUN mkdir -p /app/logs /app/temp && \
