@@ -31,7 +31,7 @@ spec:
     value: Containerfile
   - name: prefetch-input
     value: |
-      {"type": "pip", "path": ".", "allow_binary": true}
+      {"type": "pip", "path": "."}
   pipelineSpec:
     description: |
       This pipeline is ideal for building multi-arch container images from a Containerfile while maintaining trust after pipeline customization.
@@ -96,6 +96,7 @@ spec:
     - default: "false"
       description: Enable cache proxy configuration
       name: enable-cache-proxy
+      type: string
     - default: []
       description: Array of --build-arg values ("arg=value" strings) for buildah
       name: build-args
