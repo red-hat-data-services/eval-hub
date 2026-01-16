@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/ruivieira/eval-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/ruivieira/eval-hub/actions/workflows/ci.yml)
 
-An API REST server that serves as a routing and orchestration layer for evaluation backends on Kubernetes/OpenShift.
+An API REST server that serves as a routing and orchestration layer for evaluation backends. Supports local development, Podman containers, and Kubernetes/OpenShift deployments.
 
 ## Overview
 
@@ -14,7 +14,7 @@ The Evaluation Hub is designed to:
 - Store results in MLFlow experiment tracking server
 - Aggregate and return responses to clients
 - Handle requests concurrently and asynchronously
-- Deploy as a container image on OpenShift (one per namespace)
+- Deploy locally for development, as Podman containers, or on Kubernetes/OpenShift clusters
 
 ## Features
 
@@ -26,7 +26,7 @@ The Evaluation Hub is designed to:
 - **Risk Category Automation**: Automatically generates appropriate benchmarks based on risk categories (low, medium, high, critical)
 - **Async Execution**: Handles requests concurrently with progress tracking
 - **MLFlow Integration**: Automatic experiment tracking and results storage
-- **OpenShift Ready**: Containerized with Kubernetes/OpenShift deployment configurations
+- **Flexible Deployment**: Supports local development, Podman containers, and Kubernetes/OpenShift clusters
 - **Monitoring**: Prometheus metrics and health checks
 - **Scalable**: Horizontal pod autoscaling and configurable concurrency limits
 
@@ -70,11 +70,17 @@ flowchart TD
 
 ### Prerequisites
 
-- Python 3.11+
+**All Deployments:**
+- Python 3.12+
 - uv (for dependency management)
-- Docker (for containerization)
-- Kubernetes/OpenShift cluster (for deployment)
-- MLFlow tracking server
+- MLFlow tracking server (local or remote)
+
+**Containerized Deployments:**
+- Podman (for containerization and local container runs)
+
+**Kubernetes/OpenShift Deployments:**
+- Kubernetes/OpenShift cluster access
+- kubectl or oc CLI tools
 
 ### Local Development
 
@@ -103,19 +109,23 @@ flowchart TD
    - Health Check: http://localhost:8000/api/v1/health
    - Metrics: http://localhost:8000/metrics
 
-### Docker Deployment
+### Podman Deployment (Optional)
+
+If you prefer containerized deployment:
 
 1. **Build the image**:
    ```bash
-   docker build -t eval-hub:latest .
+   podman build -t eval-hub:latest .
    ```
 
-2. **Run with Docker**:
+2. **Run with Podman**:
    ```bash
-   docker run -p 8000:8000 -e MLFLOW_TRACKING_URI=http://mlflow:5000 eval-hub:latest
+   podman run -p 8000:8000 -e MLFLOW_TRACKING_URI=http://mlflow:5000 eval-hub:latest
    ```
 
-### Kubernetes/OpenShift Deployment
+### Kubernetes/OpenShift Deployment (Optional)
+
+For production cluster deployment:
 
 1. **Deploy to cluster**:
    ```bash
@@ -451,7 +461,7 @@ examples/             # Python-only configuration examples
 
 k8s/                  # Kubernetes/OpenShift configurations
 tests/                # Test suite
-docker/               # Docker configurations
+docker/               # Container configurations (Docker/Podman)
 ```
 
 ### Testing
@@ -509,11 +519,13 @@ Use kubectl logs for application logs, the evaluation API for specific evaluatio
 
 ## Contributing
 
-1. Fork the repository
-2. Create a feature branch
-3. Make changes with tests
-4. Run quality checks
-5. Submit a pull request
+We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for detailed information on how to get started, development setup, coding standards, and the contribution process.
+
+Quick links:
+- [Development Setup](CONTRIBUTING.md#development-setup)
+- [Code Standards](CONTRIBUTING.md#code-standards)
+- [Pull Request Process](CONTRIBUTING.md#pull-request-process)
+- [Issue Reporting](CONTRIBUTING.md#issue-reporting)
 
 ## License
 

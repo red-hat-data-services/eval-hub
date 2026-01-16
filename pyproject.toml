@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "eval-hub"
 version = "0.1.1"
-description = "API REST server for evaluation backend orchestration on Kubernetes"
+description = "API REST server for evaluation backend orchestration with flexible deployment options"
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}
