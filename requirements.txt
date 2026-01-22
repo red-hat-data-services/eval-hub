@@ -127,7 +127,7 @@ idna==3.11
     #   httpx
     #   requests
     #   yarl
-importlib-metadata==8.7.0
+importlib-metadata==8.7.1
     # via
     #   mlflow-skinny
     #   opentelemetry-api
