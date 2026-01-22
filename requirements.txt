@@ -163,14 +163,14 @@ oauthlib==3.3.1
     # via
     #   kubernetes
     #   requests-oauthlib
-opentelemetry-api==1.38.0
+opentelemetry-api==1.39.1
     # via
     #   mlflow-skinny
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
-opentelemetry-proto==1.38.0
+opentelemetry-proto==1.39.1
     # via mlflow-skinny
-opentelemetry-sdk==1.38.0
+opentelemetry-sdk==1.39.1
     # via mlflow-skinny
 opentelemetry-semantic-conventions==0.59b0
     # via opentelemetry-sdk
