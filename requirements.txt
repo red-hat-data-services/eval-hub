@@ -202,7 +202,7 @@ propcache==0.4.1
     #   yarl
 proto-plus==1.27.0
     # via google-api-core
-protobuf==6.33.0
+protobuf==6.33.4
     # via
     #   databricks-sdk
     #   google-api-core
