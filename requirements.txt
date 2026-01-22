@@ -139,7 +139,7 @@ kfp-pipeline-spec==2.15.2
     # via kfp
 kfp-server-api==2.15.2
     # via kfp
-kubernetes==30.1.0
+kubernetes==35.0.0
     # via
     #   eval-hub (pyproject.toml)
     #   kfp
