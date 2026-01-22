@@ -333,7 +333,7 @@ urllib3==2.3.0
     #   kfp-server-api
     #   kubernetes
     #   requests
-uvicorn==0.38.0
+uvicorn==0.40.0
     # via
     #   eval-hub (pyproject.toml)
     #   mlflow-skinny
