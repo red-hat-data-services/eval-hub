@@ -194,7 +194,7 @@ pluggy==1.6.0
     #   pytest-cov
 pre-commit==4.5.1
     # via eval-hub (pyproject.toml)
-prometheus-client==0.23.1
+prometheus-client==0.24.1
     # via eval-hub (pyproject.toml)
 propcache==0.4.1
     # via
