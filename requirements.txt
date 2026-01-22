@@ -174,7 +174,7 @@ opentelemetry-sdk==1.38.0
     # via mlflow-skinny
 opentelemetry-semantic-conventions==0.59b0
     # via opentelemetry-sdk
-packaging==25.0
+packaging==26.0
     # via
     #   black
     #   gunicorn
