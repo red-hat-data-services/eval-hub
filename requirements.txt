@@ -27,7 +27,7 @@ cachetools==6.2.1
     # via
     #   google-auth
     #   mlflow-skinny
-certifi==2025.10.5
+certifi==2026.1.4
     # via
     #   httpcore
     #   httpx
