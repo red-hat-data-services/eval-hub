@@ -6,7 +6,7 @@ aiohttp==3.13.2
     # via eval-hub (pyproject.toml)
 aiosignal==1.4.0
     # via aiohttp
-annotated-doc==0.0.3
+annotated-doc==0.0.4
     # via fastapi
 annotated-types==0.7.0
     # via pydantic
