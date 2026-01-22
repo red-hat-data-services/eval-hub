@@ -107,7 +107,7 @@ googleapis-common-protos==1.72.0
     # via google-api-core
 gunicorn==23.0.0
     # via eval-hub (pyproject.toml)
-hatchling==1.27.0
+hatchling==1.28.0
 
 h11==0.16.0
     # via
