@@ -277,7 +277,7 @@ requests-toolbelt==1.0.0
     # via kfp
 rsa==4.9.1
     # via google-auth
-ruff==0.14.13
+ruff==0.14.14
     # via eval-hub (pyproject.toml)
 six==1.17.0
     # via
