@@ -147,7 +147,7 @@ librt==0.7.8 ; platform_python_implementation != 'PyPy'
     # via mypy
 mlflow-skinny==3.6.0
     # via eval-hub (pyproject.toml)
-multidict==6.7.0
+multidict==6.7.1
     # via
     #   aiohttp
     #   yarl
