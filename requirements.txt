@@ -180,7 +180,7 @@ packaging==25.0
     #   gunicorn
     #   mlflow-skinny
     #   pytest
-pathspec==1.0.3
+pathspec==1.0.4
     # via
     #   black
     #   mypy
