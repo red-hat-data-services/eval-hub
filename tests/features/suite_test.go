@@ -1,0 +1,35 @@
+package features
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/cucumber/godog"
+)
+
+func TestFeatures(t *testing.T) {
+	// Get the absolute path to the features directory
+	// When running from project root, use "tests/features", when from features dir, use "."
+	workDir, _ := os.Getwd()
+	var featuresPath string
+	if filepath.Base(workDir) == "features" {
+		featuresPath = "."
+	} else {
+		featuresPath = filepath.Join(workDir, "tests", "features")
+	}
+
+	suite := godog.TestSuite{
+		TestSuiteInitializer: InitializeTestSuite,
+		ScenarioInitializer:  InitializeScenario,
+		Options: &godog.Options{
+			Format:   "pretty",
+			Paths:    []string{featuresPath},
+			TestingT: t,
+		},
+	}
+
+	if suite.Run() != 0 {
+		t.Fatal("non-zero status returned, failed to run feature tests")
+	}
+}

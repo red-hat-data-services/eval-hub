@@ -26,11 +26,12 @@ repos:
         args: [--maxkb=1000]
       - id: debug-statements
 
-  # Local checks (run with uv)
+  # Local checks
   - repo: local
     hooks:
       - id: mypy-check
         name: mypy type checking
+        #  run with uv
         entry: uv
         args: [run, mypy, src/]
         language: system
@@ -39,8 +40,17 @@ repos:
 
       - id: pytest-unit
         name: unit tests
+        #  run with uv
         entry: uv
         args: [run, pytest, tests/, -m, "unit", --tb=short, -q]
         language: system
         types: [python]
+        pass_filenames: false
+
+      - id: go-test
+        name: go unit and FVT tests
+        entry: make
+        args: [clean, build, test-all]
+        language: system
+        types: [go]
         pass_filenames: false
