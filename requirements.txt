@@ -56,7 +56,7 @@ colorama==0.4.6 ; sys_platform == 'win32'
     #   uvicorn
 coverage==7.13.1
     # via pytest-cov
-databricks-sdk==0.73.0
+databricks-sdk==0.81.0
     # via mlflow-skinny
 distlib==0.4.0
     # via virtualenv
