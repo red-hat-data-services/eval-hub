@@ -1,7 +1,6 @@
 # Multi-stage build for the evaluation hub Go service
 # Build stage
 FROM registry.access.redhat.com/ubi9/go-toolset@sha256:359dd4c6c4255b3f7bce4dc15ffa5a9aa65a401f819048466fa91baa8244a793 AS builder
-
 USER 0
 
 # Set working directory
@@ -29,10 +28,8 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 # Runtime stage
 FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:bb08f2300cb8d12a7eb91dddf28ea63692b3ec99e7f0fa71a1b300f2756ea829
 
-# Install runtime dependencies
-RUN microdnf install -y ca-certificates tzdata wget shadow-utils && \
-    microdnf clean all && \
-    groupadd -g 1000 evalhub && \
+# Create user and app directory
+RUN groupadd -g 1000 evalhub && \
     useradd -u 1000 -g evalhub -s /bin/bash -m evalhub && \
     mkdir -p /app/config && \
     chown -R evalhub:evalhub /app
@@ -64,9 +61,7 @@ LABEL org.opencontainers.image.title="eval-hub" \
       org.opencontainers.image.authors="eval-hub" \
       org.opencontainers.image.vendor="eval-hub"
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/health || exit 1
+# Health check removed - wget not available without package installation
 
 # Run the binary
 CMD ["/app/eval-hub"]
