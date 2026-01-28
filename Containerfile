@@ -30,9 +30,9 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
 FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
 
 # Install runtime dependencies
-RUN microdnf install -y ca-certificates tzdata wget shadow-utils && \
-    microdnf clean all && \
-    groupadd -g 1000 evalhub && \
+# RUN microdnf install -y ca-certificates tzdata wget shadow-utils && \
+#     microdnf clean all && \
+RUN groupadd -g 1000 evalhub && \
     useradd -u 1000 -g evalhub -s /bin/bash -m evalhub && \
     mkdir -p /app/config && \
     chown -R evalhub:evalhub /app
