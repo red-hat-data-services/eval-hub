@@ -23,7 +23,7 @@ backports-asyncio-runner==1.2.0 ; python_full_version < '3.11'
     # via pytest-asyncio
 black==26.1.0
     # via eval-hub (pyproject.toml)
-cachetools==6.2.1
+cachetools==6.2.6
     # via
     #   google-auth
     #   mlflow-skinny
