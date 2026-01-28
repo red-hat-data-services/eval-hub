@@ -217,3 +217,24 @@ containers/**/*_pipeline.yaml
 
 # macOS
 .DS_Store
+
+# golang related
+
+# Build output directory
+bin/
+
+# Test binary, built with `go test -c`
+*.test
+
+# Code coverage profiles and other test artifacts
+*.out
+coverage.*
+*.coverprofile
+profile.cov
+
+# Go workspace file
+go.work
+go.work.sum
+
+# sqlite database if you want to create a persisent database in the project root
+/.sqlite

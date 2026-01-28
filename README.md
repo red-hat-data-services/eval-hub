@@ -1,6 +1,6 @@
 # Eval Hub
 
-[![CI](https://github.com/ruivieira/eval-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/ruivieira/eval-hub/actions/workflows/ci.yml)
+[![CI](https://github.com/eval-hub/eval-hub/actions/workflows/ci.yml/badge.svg)](https://github.com/eval-hub/eval-hub/actions/workflows/ci.yml)
 
 An API REST server that serves as a routing and orchestration layer for evaluation backends. Supports local development, Podman containers, and Kubernetes/OpenShift deployments.
 
@@ -87,7 +87,7 @@ flowchart TD
 1. **Clone and setup**:
    ```bash
    git clone <repository>
-   cd eval-hub/poc
+   cd eval-hub
    uv venv
    source .venv/bin/activate  # On Windows: .venv\\Scripts\\activate
    uv pip install -e ".[dev]"

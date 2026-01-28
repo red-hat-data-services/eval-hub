@@ -1,63 +1,72 @@
-# Multi-stage build for the evaluation hub
-FROM registry.access.redhat.com/ubi9/python-312-minimal:latest as builder
+# Multi-stage build for the evaluation hub Go service
+# Build stage
+FROM registry.access.redhat.com/ubi9/go-toolset:1.25 AS builder
 
 USER 0
 
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+# Set working directory
+WORKDIR /build
 
-# Install uv (system dependencies already available in UBI9 Python image)
-RUN pip install uv
+# Copy go mod files first for better caching
+COPY go.mod go.sum ./
+RUN go mod download
 
-# Set work directory
+# Copy source code
+COPY . .
+
+# Build arguments for versioning
+ARG BUILD_NUMBER=0.0.1
+ARG BUILD_DATE
+ARG BUILD_PACKAGE=main
+
+# Build the binary with optimizations
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+    -ldflags="-w -s -X '${BUILD_PACKAGE}.Build=${BUILD_NUMBER}' -X '${BUILD_PACKAGE}.BuildDate=${BUILD_DATE}'" \
+    -a -installsuffix cgo \
+    -o eval-hub \
+    ./cmd/eval_hub
+
+# Runtime stage
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+# Install runtime dependencies
+RUN microdnf install -y ca-certificates tzdata wget shadow-utils && \
+    microdnf clean all && \
+    groupadd -g 1000 evalhub && \
+    useradd -u 1000 -g evalhub -s /bin/bash -m evalhub && \
+    mkdir -p /app/config && \
+    chown -R evalhub:evalhub /app
+
+# Copy binary from builder
+COPY --from=builder --chown=evalhub:evalhub /build/eval-hub /app/eval-hub
+
+# Copy configuration file
+COPY --chown=evalhub:evalhub config/server.yaml /app/config/server.yaml
+
+# Set working directory
 WORKDIR /app
 
-# Copy dependency files first for better caching
-COPY pyproject.toml README.md ./
+# Switch to non-root user
+USER evalhub
 
-# Install dependencies directly (no venv needed in container)
-RUN uv pip install --system --python /opt/app-root/bin/python3 -e .
+# Expose service port
+EXPOSE 8080
 
-# Copy source code after dependencies are installed
-COPY src/ ./src/
+# Environment variables
+ENV PORT=8080 \
+    TZ=UTC
 
-# Production stage
-FROM registry.access.redhat.com/ubi9/python-312-minimal:latest as production
-
-USER 0
-
-# Set environment variables
-ENV PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
-
-# Set work directory
-WORKDIR /app
-
-# Copy application code from builder stage (using numeric UID 1001 for UBI9 default user)
-COPY --from=builder --chown=1001:0 /app/src ./src
-COPY --from=builder --chown=1001:0 /app/pyproject.toml /app/README.md ./
-
-# Install the package in production stage
-RUN /opt/app-root/bin/python3 -m pip install -e .
-
-# Create required directories and set permissions
-RUN mkdir -p /app/logs /app/temp && \
-    chmod -R g=u /app && \
-    chmod 755 /app/src/eval_hub/data && \
-    chmod 644 /app/src/eval_hub/data/providers.yaml
-
-# Switch to non-root user (UID 1001 is the default user in UBI9 Python images)
-USER 1001
+# Labels for metadata
+LABEL org.opencontainers.image.title="eval-hub" \
+      org.opencontainers.image.description="Evaluation Hub REST API service" \
+      org.opencontainers.image.version="${BUILD_NUMBER}" \
+      org.opencontainers.image.created="${BUILD_DATE}" \
+      org.opencontainers.image.authors="eval-hub" \
+      org.opencontainers.image.vendor="eval-hub"
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8000/api/v1/health || exit 1
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/health || exit 1
 
-# Expose port
-EXPOSE 8000
-
-# Run the application
-CMD ["/opt/app-root/bin/python3", "-m", "eval_hub.main"]
+# Run the binary
+CMD ["/app/eval-hub"]
