@@ -145,7 +145,7 @@ kubernetes==30.1.0
     #   kfp
 librt==0.7.8 ; platform_python_implementation != 'PyPy'
     # via mypy
-mlflow-skinny==3.6.0
+mlflow-skinny==3.9.0
     # via eval-hub (pyproject.toml)
 multidict==6.7.0
     # via
