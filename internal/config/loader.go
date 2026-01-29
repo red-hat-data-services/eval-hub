@@ -48,15 +48,15 @@ func readConfig(logger *slog.Logger, defaultConfigValues *viper.Viper, name stri
 	return configValues, err
 }
 
-func loadProvider(logger *slog.Logger, file string) (*api.ProviderResource, error) {
-	providerConfig := &api.ProviderResource{}
+func loadProvider(logger *slog.Logger, file string) (api.ProviderResource, error) {
+	providerConfig := api.ProviderResource{}
 	configValues, err := readConfig(logger, nil, file, "yaml", "config/providers", "./config/providers", "../../config/providers")
 	if err != nil {
-		return nil, err
+		return providerConfig, err
 	}
 
 	if err := configValues.Unmarshal(&providerConfig); err != nil {
-		return nil, err
+		return providerConfig, err
 	}
 	return providerConfig, nil
 }
@@ -65,16 +65,16 @@ func scanFolders(logger *slog.Logger, dirs ...string) ([]os.DirEntry, error) {
 	for _, dir := range dirs {
 		files, err := os.ReadDir(dir)
 		if err != nil {
-			logger.Warn("No providers found in the directory", "directory", dir)
 			continue
 		}
 		return files, nil
 	}
-	return nil, fmt.Errorf("No files found in the directories")
+	logger.Warn("No providers found", "directores", dirs)
+	return []os.DirEntry{}, nil
 }
 
-func LoadProviderConfigs(logger *slog.Logger) (map[string]*api.ProviderResource, error) {
-	providerConfigs := make(map[string]*api.ProviderResource)
+func LoadProviderConfigs(logger *slog.Logger) (map[string]api.ProviderResource, error) {
+	providerConfigs := make(map[string]api.ProviderResource)
 	files, err := scanFolders(logger, "./config/providers", "../../config/providers")
 	if err != nil {
 		return nil, err
