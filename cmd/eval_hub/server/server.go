@@ -27,6 +27,7 @@ type Server struct {
 	providerConfigs map[string]api.ProviderResource
 	storage         abstractions.Storage
 	validate        *validator.Validate
+	runtime         abstractions.Runtime
 }
 
 // NewServer creates a new HTTP server instance with the provided logger and configuration.
@@ -48,7 +49,13 @@ type Server struct {
 // Returns:
 //   - *Server: A configured server instance
 //   - error: An error if logger or serviceConfig is nil
-func NewServer(logger *slog.Logger, serviceConfig *config.Config, providerConfigs map[string]api.ProviderResource, storage abstractions.Storage, validate *validator.Validate) (*Server, error) {
+func NewServer(logger *slog.Logger,
+	serviceConfig *config.Config,
+	providerConfigs map[string]api.ProviderResource,
+	storage abstractions.Storage,
+	validate *validator.Validate,
+	runtime abstractions.Runtime) (*Server, error) {
+
 	if logger == nil {
 		return nil, fmt.Errorf("logger is required for the server")
 	}
@@ -69,6 +76,7 @@ func NewServer(logger *slog.Logger, serviceConfig *config.Config, providerConfig
 		providerConfigs: providerConfigs,
 		storage:         storage,
 		validate:        validate,
+		runtime:         runtime,
 	}, nil
 }
 

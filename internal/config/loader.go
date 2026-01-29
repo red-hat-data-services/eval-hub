@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -198,6 +199,9 @@ func LoadConfig(logger *slog.Logger, version string, build string, buildDate str
 		logger.Info("Mapped environment variable", "field_name", field, "env_name", envName)
 	}
 
+	localMode := flag.Bool("local", false, "Server operates in local mode or not.")
+	flag.Parse()
+
 	conf := Config{}
 	if err := configValues.Unmarshal(&conf); err != nil {
 		return nil, err
@@ -207,7 +211,7 @@ func LoadConfig(logger *slog.Logger, version string, build string, buildDate str
 	conf.Service.Version = version
 	conf.Service.Build = build
 	conf.Service.BuildDate = buildDate
-
+	conf.Service.LocalMode = *localMode
 	return &conf, nil
 }
 

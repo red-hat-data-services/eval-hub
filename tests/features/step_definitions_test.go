@@ -18,6 +18,7 @@ import (
 	"github.com/eval-hub/eval-hub/cmd/eval_hub/server"
 	"github.com/eval-hub/eval-hub/internal/config"
 	"github.com/eval-hub/eval-hub/internal/logging"
+	"github.com/eval-hub/eval-hub/internal/runtimes"
 	"github.com/eval-hub/eval-hub/internal/storage"
 	"github.com/eval-hub/eval-hub/internal/validation"
 
@@ -104,6 +105,7 @@ func (a *apiFeature) startLocalServer(port int) error {
 		return fmt.Errorf("failed to load service config: %w", err)
 	}
 	serviceConfig.Service.Port = port
+
 	storage, err := storage.NewStorage(serviceConfig, logger)
 	if err != nil {
 		return fmt.Errorf("failed to create storage: %w", err)
@@ -118,7 +120,14 @@ func (a *apiFeature) startLocalServer(port int) error {
 	}
 
 	logger.Info("Providers loaded.")
-	a.server, err = server.NewServer(logger, serviceConfig, providerConfigs, storage, validate)
+
+	serviceConfig.Service.LocalMode = true // set local mode for testing
+	runtime, err := runtimes.NewRuntime(logger, serviceConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create runtime: %w", err)
+	}
+
+	a.server, err = server.NewServer(logger, serviceConfig, providerConfigs, storage, validate, runtime)
 	if err != nil {
 		return err
 	}

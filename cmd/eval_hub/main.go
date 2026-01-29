@@ -14,6 +14,7 @@ import (
 	"github.com/eval-hub/eval-hub/cmd/eval_hub/server"
 	"github.com/eval-hub/eval-hub/internal/config"
 	"github.com/eval-hub/eval-hub/internal/logging"
+	"github.com/eval-hub/eval-hub/internal/runtimes"
 	"github.com/eval-hub/eval-hub/internal/storage"
 	"github.com/eval-hub/eval-hub/internal/validation"
 )
@@ -28,9 +29,6 @@ var (
 )
 
 func main() {
-	// TODO write fatal errors to the error file and close down the server
-
-	// Create logger once for all requests
 	logger, logShutdown, err := logging.NewLogger()
 	if err != nil {
 		// we do this as no point trying to continue
@@ -42,6 +40,8 @@ func main() {
 		// we do this as no point trying to continue
 		startUpFailed(nil, err, "Failed to create service config", logger)
 	}
+
+	logger.Info("Service in local mode ", "local", serviceConfig.Service.LocalMode)
 
 	// set up the validator
 	validate, err := validation.NewValidator()
@@ -66,7 +66,16 @@ func main() {
 		startUpFailed(serviceConfig, err, "Failed to create provider configs", logger)
 	}
 
-	srv, err := server.NewServer(logger, serviceConfig, providerConfigs, storage, validate)
+	// setup runtime
+	runtime, err := runtimes.NewRuntime(logger, serviceConfig)
+	if err != nil {
+		// we do this as no point trying to continue
+		startUpFailed(serviceConfig, err, "Failed to create runtime", logger)
+	}
+
+	logger.Info("Runtime created", "runtime", runtime.Name())
+
+	srv, err := server.NewServer(logger, serviceConfig, providerConfigs, storage, validate, runtime)
 	if err != nil {
 		// we do this as no point trying to continue
 		startUpFailed(serviceConfig, err, "Failed to create server", logger)

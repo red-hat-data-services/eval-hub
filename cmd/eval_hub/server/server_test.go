@@ -15,6 +15,7 @@ import (
 	"github.com/eval-hub/eval-hub/cmd/eval_hub/server"
 	"github.com/eval-hub/eval-hub/internal/config"
 	"github.com/eval-hub/eval-hub/internal/logging"
+	"github.com/eval-hub/eval-hub/internal/runtimes"
 	"github.com/eval-hub/eval-hub/internal/storage"
 	"github.com/eval-hub/eval-hub/internal/validation"
 )
@@ -211,5 +212,10 @@ func createServer(port int) (*server.Server, error) {
 		// we do this as no point trying to continue
 		return nil, fmt.Errorf("failed to load provider configs: %w", err)
 	}
-	return server.NewServer(logger, serviceConfig, providerConfigs, storage, validate)
+	serviceConfig.Service.LocalMode = true // set local mode for testing
+	runtime, err := runtimes.NewRuntime(logger, serviceConfig)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create runtime: %w", err)
+	}
+	return server.NewServer(logger, serviceConfig, providerConfigs, storage, validate, runtime)
 }
