@@ -207,7 +207,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"net/http"
 
 	"github.com/your-org/eval-hub/internal/executioncontext"
 )
