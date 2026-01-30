@@ -520,7 +520,7 @@ For feature requests, include:
 ### Building Documentation
 
 ```bash
-# The OpenAPI specification is maintained in api/openapi.yaml
+# The OpenAPI specification is maintained in docs/openapi.yaml
 # Update the spec as you add or modify endpoints
 
 # To view the API documentation locally, you can use any OpenAPI viewer
