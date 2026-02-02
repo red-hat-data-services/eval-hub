@@ -506,7 +506,7 @@ paths:
           $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
-  /api/v1/evaluations/collections/{collection_id}:
+  /api/v1/evaluations/collections/{id}:
     get:
       tags:
         - Collections
@@ -514,7 +514,7 @@ paths:
       description: Get details of a specific collection.
       operationId: get_collection_api_v1_evaluations_collections__collection_id__get
       parameters:
-        - name: collection_id
+        - name: id
           in: path
           required: true
           schema:
@@ -542,7 +542,7 @@ paths:
       description: Update an existing collection.
       operationId: update_collection_api_v1_evaluations_collections__collection_id__put
       parameters:
-        - name: collection_id
+        - name: id
           in: path
           required: true
           schema:
@@ -576,7 +576,7 @@ paths:
       description: Partially update an existing collection.
       operationId: patch_collection_api_v1_evaluations_collections__collection_id__patch
       parameters:
-        - name: collection_id
+        - name: id
           in: path
           required: true
           schema:
@@ -610,7 +610,7 @@ paths:
       description: Delete a collection.
       operationId: delete_collection_api_v1_evaluations_collections__collection_id__delete
       parameters:
-        - name: collection_id
+        - name: id
           in: path
           required: true
           schema:
@@ -790,10 +790,9 @@ components:
       description: Result payload for a single benchmark.
     Collection:
       properties:
-        collection_id:
-          type: string
-          title: Collection Id
-          description: Unique collection identifier
+        resource:
+          $ref: '#/components/schemas/ResourceInfo'
+          description: Resource metadata
         name:
           type: string
           title: Name
@@ -802,17 +801,13 @@ components:
           type: string
           title: Description
           description: Collection description
-        provider_id:
-          type: string
-          title: Provider Id
-          description: Primary provider for this collection
         tags:
           items:
             type: string
           type: array
           title: Tags
           description: Tags for categorizing the collection
-        metadata:
+        custom:
           additionalProperties: true
           type: object
           title: Metadata
@@ -823,18 +818,8 @@ components:
           type: array
           title: Benchmarks
           description: List of benchmark references in this collection
-        created_at:
-          type: string
-          title: Created At
-          description: Collection creation timestamp
-        updated_at:
-          type: string
-          title: Updated At
-          description: Collection last update timestamp
-      additionalProperties: true
       type: object
       required:
-        - collection_id
         - name
         - description
         - benchmarks
@@ -842,10 +827,6 @@ components:
       description: Collection of benchmarks for specific evaluation scenarios.
     CollectionCreationRequest:
       properties:
-        collection_id:
-          type: string
-          title: Collection Id
-          description: Unique collection identifier
         name:
           type: string
           title: Name
@@ -854,17 +835,13 @@ components:
           type: string
           title: Description
           description: Collection description
-        provider_id:
-          type: string
-          title: Provider Id
-          description: Primary provider for this collection
         tags:
           items:
             type: string
           type: array
           title: Tags
           description: Tags for categorizing the collection
-        metadata:
+        custom:
           additionalProperties: true
           type: object
           title: Metadata
@@ -875,10 +852,8 @@ components:
           type: array
           title: Benchmarks
           description: List of benchmark references in this collection
-      additionalProperties: true
       type: object
       required:
-        - collection_id
         - name
         - description
         - benchmarks
@@ -921,9 +896,15 @@ components:
       description: Request for updating an existing collection.
     EvaluationResponse:
       properties:
-        system:
-          $ref: '#/components/schemas/SystemInfo'
-          description: System metadata for the request
+        resource:
+          allOf:
+            - $ref: '#/components/schemas/ResourceInfo'
+            - type: object
+              properties:
+                mlflow_experiment_id:
+                  type: string
+                  title: Mlflow Experiment Id
+                  description: MLFlow experiment ID
         results:
           $ref: '#/components/schemas/ResultsPayload'
           description: Results payload available upon success
@@ -955,13 +936,12 @@ components:
       additionalProperties: true
       type: object
       required:
-        - system
+        - resource
         - model
         - benchmarks
         - experiment
         - timeout_minutes
         - retry_attempts
-        - async_mode
       title: EvaluationResponse
       description: Response payload for evaluation requests.
     EvaluationResult:
@@ -1263,11 +1243,6 @@ components:
           title: Retry Attempts
           description: Number of retry attempts on failure
           default: 3
-        async_mode:
-          type: boolean
-          title: Async Mode
-          description: Whether to run evaluations asynchronously
-          default: true
         created_at:
           type: string
           format: date-time
@@ -1286,14 +1261,14 @@ components:
         - experiment
       title: EvaluationRequest
       description: Simplified evaluation request using the new schema.
-    SystemInfo:
+    ResourceInfo:
       properties:
         id:
           type: string
           title: Id
           description: Unique evaluation request ID
         status:
-          $ref: '#/components/schemas/SystemStatus'
+          $ref: '#/components/schemas/Status'
           description: Current status of the request
         created_at:
           type: string
@@ -1311,9 +1286,9 @@ components:
         - id
         - status
         - created_at
-      title: SystemInfo
+      title: ResourceInfo
       description: Metadata about the evaluation resource.
-    SystemStatus:
+    Status:
       properties:
         state:
           type: string
@@ -1338,5 +1313,5 @@ components:
       type: object
       required:
         - state
-      title: SystemStatus
+      title: Status
       description: Overall status for an evaluation request.
