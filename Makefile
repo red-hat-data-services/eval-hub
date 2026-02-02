@@ -1,4 +1,4 @@
-.PHONY: help autoupdate-precommit pre-commit clean build build-coverage start-service stop-service lint test test-fvt-server test-all test-coverage test-fvt-coverage test-fvt-server-coverage test-all-coverage install-deps update-deps get-deps fmt vet update-deps
+.PHONY: help autoupdate-precommit pre-commit clean build build-coverage start-service stop-service lint test test-fvt-server test-all test-coverage test-fvt-coverage test-fvt-server-coverage test-all-coverage install-deps update-deps get-deps fmt vet update-deps generate-public-docs verify-api-docs generate-ignore-file documentation
 
 # Variables
 BINARY_NAME = eval-hub
@@ -270,16 +270,18 @@ clean-docs:
 	rm -f docs/openapi.yaml docs/openapi.json docs/openapi-internal.yaml docs/openapi-internal.json docs/*.html
 
 generate-public-docs: ${REDOCLY_CLI}
+	npm update @redocly/cli
 	cd docs && ${REDOCLY_CLI} bundle external@latest --output openapi.yaml --remove-unused-components
 	cd docs && ${REDOCLY_CLI} bundle external@latest --ext json --output openapi.json
 	cd docs && ${REDOCLY_CLI} bundle internal@latest --output openapi-internal.yaml --remove-unused-components
 	cd docs && ${REDOCLY_CLI} bundle internal@latest --ext json --output openapi-internal.json
 	cd docs && ${REDOCLY_CLI} build-docs openapi.json --output=index-public.html
-	cd docs && ${REDOCLY_CLI} build-docs openapi-internal.json --output=index.html
+	cd docs && ${REDOCLY_CLI} build-docs openapi-internal.json --output=index-private.html
+	cp docs/index-public.html docs/index.html
 
 verify-api-docs: ${REDOCLY_CLI}
 	${REDOCLY_CLI} lint ./docs/openapi.yaml
-	echo "See https://editor.swagger.io/?url=https://raw.githubusercontent.com/julpayne/eval-hub/refs/heads/api-updates/docs/openapi.yaml"
+	@echo "Tip: open docs/openapi.yaml in Swagger Editor (such as https://editor.swagger.io/) to automatically inspect the rendered spec."
 
 generate-ignore-file: ${REDOCLY_CLI}
 	${REDOCLY_CLI} lint --generate-ignore-file ./docs/openapi.yaml
