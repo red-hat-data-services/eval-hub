@@ -3,6 +3,20 @@ provider_name: RAGAS
 description: Retrieval Augmented Generation Assessment framework
 provider_type: builtin
 base_url: null
+runtime:
+  k8s:
+    image: quay.io/eval-hub/garak:latest
+    entrypoint: /path_to_program
+    cpu_request: 100m
+    memory_request: 128Mi
+    cpu_limit: 500m
+    memory_limit: 1Gi
+    env_vars:
+      # Default environment variables
+      VAR_NAME: VALUE
+  local:
+    # reserved for local runtime
+
 benchmarks:
   - benchmark_id: faithfulness
     name: Faithfulness

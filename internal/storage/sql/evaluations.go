@@ -46,11 +46,14 @@ func (s *SQLStorage) CreateEvaluationJob(executionContext *executioncontext.Exec
 		return nil, err
 	}
 	evaluationResource := &api.EvaluationJobResource{
-		Resource: api.Resource{
-			ID:        jobID,
-			Tenant:    api.Tenant(tenant),
-			CreatedAt: time.Now(),
-			UpdatedAt: time.Now(),
+		Resource: api.EvaluationResource{
+			Resource: api.Resource{
+				ID:        jobID,
+				Tenant:    api.Tenant(tenant),
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+			},
+			MLFlowExperimentID: nil,
 		},
 		EvaluationJobConfig: *evaluation,
 		Status: api.EvaluationJobStatus{
@@ -102,11 +105,14 @@ func (s *SQLStorage) GetEvaluationJob(ctx *executioncontext.ExecutionContext, id
 	// Construct the EvaluationJobResource
 	// Note: Results and Benchmarks are initialized with defaults since they're not stored in the entity column
 	evaluationResource := &api.EvaluationJobResource{
-		Resource: api.Resource{
-			ID:        dbID,
-			Tenant:    "TODO", // TODO: retrieve tenant from database or context
-			CreatedAt: createdAt,
-			UpdatedAt: updatedAt,
+		Resource: api.EvaluationResource{
+			Resource: api.Resource{
+				ID:        dbID,
+				Tenant:    "TODO", // TODO: retrieve tenant from database or context
+				CreatedAt: createdAt,
+				UpdatedAt: updatedAt,
+			},
+			MLFlowExperimentID: nil,
 		},
 		EvaluationJobConfig: evaluationConfig,
 		Status: api.EvaluationJobStatus{
@@ -182,11 +188,14 @@ func (s *SQLStorage) GetEvaluationJobs(ctx *executioncontext.ExecutionContext, l
 		// Construct the EvaluationJobResource
 		// Note: Results and Benchmarks are initialized with defaults since they're not stored in the entity column
 		resource := api.EvaluationJobResource{
-			Resource: api.Resource{
-				ID:        dbID,
-				Tenant:    "TODO", // TODO: retrieve tenant from database or context
-				CreatedAt: createdAt,
-				UpdatedAt: updatedAt,
+			Resource: api.EvaluationResource{
+				Resource: api.Resource{
+					ID:        dbID,
+					Tenant:    "TODO", // TODO: 	retrieve tenant from database or context
+					CreatedAt: createdAt,
+					UpdatedAt: updatedAt,
+				},
+				MLFlowExperimentID: nil,
 			},
 			EvaluationJobConfig: evaluationConfig,
 			Status: api.EvaluationJobStatus{

@@ -128,7 +128,7 @@ func TestServerSetupRoutes(t *testing.T) {
 				if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 					t.Errorf("Failed to unmarshal body: %v", err)
 				}
-				id := getKeyAsString(body, "id")
+				id := getKeyAsString(body["resource"].(map[string]interface{}), "id")
 				if id != "" {
 					evaluationIds = append(evaluationIds, id)
 				} else {

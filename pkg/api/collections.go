@@ -9,7 +9,7 @@ type CollectionConfig struct {
 
 // CollectionResource represents collection resource
 type CollectionResource struct {
-	Resource
+	Resource Resource `json:"resource"`
 	CollectionConfig
 }
 

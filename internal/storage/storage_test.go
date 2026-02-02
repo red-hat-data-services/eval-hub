@@ -89,7 +89,7 @@ func TestStorage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to create evaluation job: %v", err)
 		}
-		evaluationId = resp.ID
+		evaluationId = resp.Resource.ID
 		if evaluationId == "" {
 			t.Fatalf("Evaluation ID is empty")
 		}
@@ -101,8 +101,8 @@ func TestStorage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to get evaluation job: %v", err)
 		}
-		if resp.ID != evaluationId {
-			t.Fatalf("Evaluation ID mismatch: %s != %s", resp.ID, evaluationId)
+		if resp.Resource.ID != evaluationId {
+			t.Fatalf("Evaluation ID mismatch: %s != %s", resp.Resource.ID, evaluationId)
 		}
 	})
 

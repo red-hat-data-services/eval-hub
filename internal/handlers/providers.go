@@ -3,7 +3,6 @@ package handlers
 import (
 	"maps"
 
-	"slices"
 	"strings"
 
 	"github.com/eval-hub/eval-hub/internal/executioncontext"
@@ -14,9 +13,16 @@ import (
 // HandleListProviders handles GET /api/v1/evaluations/providers
 func (h *Handlers) HandleListProviders(ctx *executioncontext.ExecutionContext, w http_wrappers.ResponseWrapper) {
 
+	// Remove runtime configuration from the provider configs. This is internal information
+	configs := make([]api.ProviderResource, 0, len(ctx.ProviderConfigs))
+	for config := range maps.Values(ctx.ProviderConfigs) {
+		config.Runtime = nil
+		configs = append(configs, config)
+	}
+
 	list := api.ProviderResourceList{
 		TotalCount: len(ctx.ProviderConfigs),
-		Items:      slices.Collect(maps.Values(ctx.ProviderConfigs)),
+		Items:      configs,
 	}
 
 	w.WriteJSON(list, 200)
@@ -38,7 +44,7 @@ func (h *Handlers) HandleGetProvider(ctx *executioncontext.ExecutionContext, w h
 
 		return
 	}
-
+	p.Runtime = nil
 	w.WriteJSON(p, 200)
 
 }

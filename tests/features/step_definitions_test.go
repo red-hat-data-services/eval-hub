@@ -258,8 +258,8 @@ func extractId(body []byte) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if id, ok := obj["id"]; ok {
-		return id.(string), nil
+	if id, ok := obj["resource"].(map[string]any)["id"].(string); ok {
+		return id, nil
 	}
 	return "", nil
 }

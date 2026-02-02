@@ -28,7 +28,7 @@ type jobConfig struct {
 	retryAttempts     int
 	adapterImage      string
 	evalHubServiceURL string
-	defaultEnv        []api.ProviderEnvVar
+	defaultEnv        []api.EnvVar
 	cpuRequest        string
 	memoryRequest     string
 	cpuLimit          string
@@ -43,16 +43,16 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 	}
 
 	runtime := provider.Runtime
-	if runtime == nil {
+	if runtime == nil || runtime.K8s == nil {
 		return nil, fmt.Errorf("provider %q missing runtime configuration", provider.ProviderID)
 	}
 
-	cpuRequest := defaultIfEmpty(runtime.CPURequest, defaultCPURequest)
-	memoryRequest := defaultIfEmpty(runtime.MemoryRequest, defaultMemoryRequest)
-	cpuLimit := defaultIfEmpty(runtime.CPULimit, defaultCPULimit)
-	memoryLimit := defaultIfEmpty(runtime.MemoryLimit, defaultMemoryLimit)
+	cpuRequest := defaultIfEmpty(runtime.K8s.CPURequest, defaultCPURequest)
+	memoryRequest := defaultIfEmpty(runtime.K8s.MemoryRequest, defaultMemoryRequest)
+	cpuLimit := defaultIfEmpty(runtime.K8s.CPULimit, defaultCPULimit)
+	memoryLimit := defaultIfEmpty(runtime.K8s.MemoryLimit, defaultMemoryLimit)
 
-	if runtime.AdapterImage == "" {
+	if runtime.K8s.Image == "" {
 		return nil, fmt.Errorf("runtime adapter image is required")
 	}
 	evalHubServiceURL := os.Getenv(evalHubServiceEnv)
@@ -70,14 +70,14 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 	namespace := resolveNamespace("")
 
 	return &jobConfig{
-		jobID:             evaluation.ID,
+		jobID:             evaluation.Resource.ID,
 		namespace:         namespace,
 		providerID:        provider.ProviderID,
 		benchmarkID:       benchmarkID,
 		retryAttempts:     retryAttempts,
-		adapterImage:      runtime.AdapterImage,
+		adapterImage:      runtime.K8s.Image,
 		evalHubServiceURL: evalHubServiceURL,
-		defaultEnv:        runtime.DefaultEnv,
+		defaultEnv:        runtime.K8s.Env,
 		cpuRequest:        cpuRequest,
 		memoryRequest:     memoryRequest,
 		cpuLimit:          cpuLimit,

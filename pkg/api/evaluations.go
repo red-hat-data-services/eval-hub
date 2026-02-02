@@ -22,7 +22,7 @@ type ModelRef struct {
 // BenchmarkConfig represents a reference to a benchmark
 type BenchmarkConfig struct {
 	Ref
-	Limit      *int           `json:"limit,omitempty"`
+	ProviderID string         `json:"provider_id"`
 	Parameters map[string]any `json:"parameters,omitempty"`
 }
 
@@ -87,12 +87,16 @@ type EvaluationJobConfig struct {
 	Experiment     ExperimentConfig  `json:"experiment"`
 	TimeoutMinutes *int              `json:"timeout_minutes,omitempty"`
 	RetryAttempts  *int              `json:"retry_attempts,omitempty"`
-	CallbackURL    *string           `json:"callback_url,omitempty"`
+}
+
+type EvaluationResource struct {
+	Resource
+	MLFlowExperimentID *string `json:"mlflow_experiment_id,omitempty"`
 }
 
 // EvaluationJobResource represents evaluation job resource response
 type EvaluationJobResource struct {
-	Resource
+	Resource EvaluationResource `json:"resource"`
 	EvaluationJobConfig
 	Status  EvaluationJobStatus   `json:"status"`
 	Results *EvaluationJobResults `json:"results,omitempty"`

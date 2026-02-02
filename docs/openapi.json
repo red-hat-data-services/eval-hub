@@ -699,7 +699,7 @@
         }
       }
     },
-    "/api/v1/evaluations/collections/{collection_id}": {
+    "/api/v1/evaluations/collections/{id}": {
       "get": {
         "tags": [
           "Collections"
@@ -709,7 +709,7 @@
         "operationId": "get_collection_api_v1_evaluations_collections__collection_id__get",
         "parameters": [
           {
-            "name": "collection_id",
+            "name": "id",
             "in": "path",
             "required": true,
             "schema": {
@@ -752,7 +752,7 @@
         "operationId": "update_collection_api_v1_evaluations_collections__collection_id__put",
         "parameters": [
           {
-            "name": "collection_id",
+            "name": "id",
             "in": "path",
             "required": true,
             "schema": {
@@ -805,7 +805,7 @@
         "operationId": "patch_collection_api_v1_evaluations_collections__collection_id__patch",
         "parameters": [
           {
-            "name": "collection_id",
+            "name": "id",
             "in": "path",
             "required": true,
             "schema": {
@@ -858,7 +858,7 @@
         "operationId": "delete_collection_api_v1_evaluations_collections__collection_id__delete",
         "parameters": [
           {
-            "name": "collection_id",
+            "name": "id",
             "in": "path",
             "required": true,
             "schema": {
@@ -1169,10 +1169,9 @@
       },
       "Collection": {
         "properties": {
-          "collection_id": {
-            "type": "string",
-            "title": "Collection Id",
-            "description": "Unique collection identifier"
+          "resource": {
+            "$ref": "#/components/schemas/ResourceInfo",
+            "description": "Resource metadata"
           },
           "name": {
             "type": "string",
@@ -1184,11 +1183,6 @@
             "title": "Description",
             "description": "Collection description"
           },
-          "provider_id": {
-            "type": "string",
-            "title": "Provider Id",
-            "description": "Primary provider for this collection"
-          },
           "tags": {
             "items": {
               "type": "string"
@@ -1197,7 +1191,7 @@
             "title": "Tags",
             "description": "Tags for categorizing the collection"
           },
-          "metadata": {
+          "custom": {
             "additionalProperties": true,
             "type": "object",
             "title": "Metadata",
@@ -1210,22 +1204,10 @@
             "type": "array",
             "title": "Benchmarks",
             "description": "List of benchmark references in this collection"
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At",
-            "description": "Collection creation timestamp"
-          },
-          "updated_at": {
-            "type": "string",
-            "title": "Updated At",
-            "description": "Collection last update timestamp"
           }
         },
-        "additionalProperties": true,
         "type": "object",
         "required": [
-          "collection_id",
           "name",
           "description",
           "benchmarks"
@@ -1235,11 +1217,6 @@
       },
       "CollectionCreationRequest": {
         "properties": {
-          "collection_id": {
-            "type": "string",
-            "title": "Collection Id",
-            "description": "Unique collection identifier"
-          },
           "name": {
             "type": "string",
             "title": "Name",
@@ -1250,11 +1227,6 @@
             "title": "Description",
             "description": "Collection description"
           },
-          "provider_id": {
-            "type": "string",
-            "title": "Provider Id",
-            "description": "Primary provider for this collection"
-          },
           "tags": {
             "items": {
               "type": "string"
@@ -1263,7 +1235,7 @@
             "title": "Tags",
             "description": "Tags for categorizing the collection"
           },
-          "metadata": {
+          "custom": {
             "additionalProperties": true,
             "type": "object",
             "title": "Metadata",
@@ -1278,10 +1250,8 @@
             "description": "List of benchmark references in this collection"
           }
         },
-        "additionalProperties": true,
         "type": "object",
         "required": [
-          "collection_id",
           "name",
           "description",
           "benchmarks"
@@ -1336,9 +1306,22 @@
       },
       "EvaluationResponse": {
         "properties": {
-          "system": {
-            "$ref": "#/components/schemas/SystemInfo",
-            "description": "System metadata for the request"
+          "resource": {
+            "allOf": [
+              {
+                "$ref": "#/components/schemas/ResourceInfo"
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "mlflow_experiment_id": {
+                    "type": "string",
+                    "title": "Mlflow Experiment Id",
+                    "description": "MLFlow experiment ID"
+                  }
+                }
+              }
+            ]
           },
           "results": {
             "$ref": "#/components/schemas/ResultsPayload",
@@ -1370,16 +1353,6 @@
             "title": "Retry Attempts",
             "description": "Number of retry attempts (user-provided)"
           },
-          "callback_url": {
-            "type": "string",
-            "title": "Callback Url",
-            "description": "Callback URL provided by the user"
-          },
-          "async_mode": {
-            "type": "boolean",
-            "title": "Async Mode",
-            "description": "Whether the evaluation runs asynchronously"
-          },
           "custom": {
             "additionalProperties": true,
             "type": "object",
@@ -1390,13 +1363,12 @@
         "additionalProperties": true,
         "type": "object",
         "required": [
-          "system",
+          "resource",
           "model",
           "benchmarks",
           "experiment",
           "timeout_minutes",
-          "retry_attempts",
-          "async_mode"
+          "retry_attempts"
         ],
         "title": "EvaluationResponse",
         "description": "Response payload for evaluation requests."
@@ -1799,17 +1771,6 @@
             "description": "Number of retry attempts on failure",
             "default": 3
           },
-          "async_mode": {
-            "type": "boolean",
-            "title": "Async Mode",
-            "description": "Whether to run evaluations asynchronously",
-            "default": true
-          },
-          "callback_url": {
-            "type": "string",
-            "title": "Callback Url",
-            "description": "URL to call when evaluation completes"
-          },
           "created_at": {
             "type": "string",
             "format": "date-time",
@@ -1833,7 +1794,7 @@
         "title": "EvaluationRequest",
         "description": "Simplified evaluation request using the new schema."
       },
-      "SystemInfo": {
+      "ResourceInfo": {
         "properties": {
           "id": {
             "type": "string",
@@ -1841,7 +1802,7 @@
             "description": "Unique evaluation request ID"
           },
           "status": {
-            "$ref": "#/components/schemas/SystemStatus",
+            "$ref": "#/components/schemas/Status",
             "description": "Current status of the request"
           },
           "created_at": {
@@ -1864,10 +1825,10 @@
           "status",
           "created_at"
         ],
-        "title": "SystemInfo",
+        "title": "ResourceInfo",
         "description": "Metadata about the evaluation resource."
       },
-      "SystemStatus": {
+      "Status": {
         "properties": {
           "state": {
             "type": "string",
@@ -1899,7 +1860,7 @@
         "required": [
           "state"
         ],
-        "title": "SystemStatus",
+        "title": "Status",
         "description": "Overall status for an evaluation request."
       }
     }
