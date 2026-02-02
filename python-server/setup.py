@@ -1,6 +1,7 @@
 import os
 import platform
 import sys
+
 from setuptools import setup
 from setuptools.command.install import install
 from wheel.bdist_wheel import bdist_wheel
