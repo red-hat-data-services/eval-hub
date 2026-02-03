@@ -3,6 +3,8 @@ package sql
 import (
 	"database/sql"
 	"encoding/json"
+	"net/url"
+	"strconv"
 	"time"
 
 	// import the postgres driver - "pgx"
@@ -12,7 +14,9 @@ import (
 	// import the sqlite driver - "sqlite"
 	_ "modernc.org/sqlite"
 
+	"github.com/eval-hub/eval-hub/internal/constants"
 	"github.com/eval-hub/eval-hub/internal/executioncontext"
+	"github.com/eval-hub/eval-hub/internal/http_wrappers"
 	"github.com/eval-hub/eval-hub/internal/messages"
 	"github.com/eval-hub/eval-hub/internal/serviceerrors"
 	"github.com/eval-hub/eval-hub/pkg/api"
@@ -58,8 +62,11 @@ func (s *SQLStorage) CreateEvaluationJob(executionContext *executioncontext.Exec
 		EvaluationJobConfig: *evaluation,
 		Status: api.EvaluationJobStatus{
 			EvaluationJobState: api.EvaluationJobState{
-				State:   api.StatePending,
-				Message: "Evaluation job created",
+				State: api.StatePending,
+				Message: &api.MessageInfo{
+					Message:     "Evaluation job created",
+					MessageCode: constants.MESSAGE_CODE_EVALUATION_JOB_CREATED,
+				},
 			},
 			Benchmarks: nil,
 		},
@@ -117,8 +124,11 @@ func (s *SQLStorage) GetEvaluationJob(ctx *executioncontext.ExecutionContext, id
 		EvaluationJobConfig: evaluationConfig,
 		Status: api.EvaluationJobStatus{
 			EvaluationJobState: api.EvaluationJobState{
-				State:   status,
-				Message: "Evaluation job retrieved",
+				State: status,
+				Message: &api.MessageInfo{
+					Message:     "Evaluation job retrieved",
+					MessageCode: constants.MESSAGE_CODE_EVALUATION_JOB_RETRIEVED,
+				},
 			},
 			Benchmarks: nil, // TODO: retrieve benchmarks status from database
 		},
@@ -128,7 +138,7 @@ func (s *SQLStorage) GetEvaluationJob(ctx *executioncontext.ExecutionContext, id
 	return evaluationResource, nil
 }
 
-func (s *SQLStorage) GetEvaluationJobs(ctx *executioncontext.ExecutionContext, limit int, offset int, statusFilter string) (*api.EvaluationJobResourceList, error) {
+func (s *SQLStorage) GetEvaluationJobs(ctx *executioncontext.ExecutionContext, r http_wrappers.RequestWrapper, limit int, offset int, statusFilter string) (*api.EvaluationJobResourceList, error) {
 	// Get total count (with status filter if provided)
 	countQuery, countArgs, err := createCountEntitiesStatement(s.sqlConfig.Driver, TABLE_EVALUATIONS, statusFilter)
 	if err != nil {
@@ -200,8 +210,11 @@ func (s *SQLStorage) GetEvaluationJobs(ctx *executioncontext.ExecutionContext, l
 			EvaluationJobConfig: evaluationConfig,
 			Status: api.EvaluationJobStatus{
 				EvaluationJobState: api.EvaluationJobState{
-					State:   status,
-					Message: "Evaluation job retrieved",
+					State: status,
+					Message: &api.MessageInfo{
+						Message:     "Evaluation job retrieved",
+						MessageCode: constants.MESSAGE_CODE_EVALUATION_JOB_RETRIEVED,
+					},
 				},
 				Benchmarks: nil, // TODO: retrieve benchmarks status from database
 			},
@@ -216,16 +229,27 @@ func (s *SQLStorage) GetEvaluationJobs(ctx *executioncontext.ExecutionContext, l
 	}
 
 	// Calculate pagination info
-	// Note: hrefs are left empty as they should be populated by the handler based on the request URL
 	hasNext := offset+limit < totalCount
 	var nextHref *api.HRef
 	if hasNext {
-		nextHref = &api.HRef{Href: ""} // Handler should populate this
+		href, err := url.Parse(r.URI())
+		if err != nil {
+			ctx.Logger.Error("Failed to parse request URI", "uri", r.URI(), "error", err)
+			return nil, serviceerrors.NewServiceError(messages.InternalServerError, "Error", err.Error())
+		}
+		q := href.Query()
+		if !q.Has("offset") {
+			q.Add("offset", strconv.Itoa(offset+limit))
+		} else {
+			q.Set("offset", strconv.Itoa(offset+limit))
+		}
+		href.RawQuery = q.Encode()
+		nextHref = &api.HRef{Href: href.String()}
 	}
 
 	return &api.EvaluationJobResourceList{
 		Page: api.Page{
-			First:      &api.HRef{Href: ""}, // Handler should populate this
+			First:      &api.HRef{Href: r.URI()},
 			Next:       nextHref,
 			Limit:      limit,
 			TotalCount: totalCount,
@@ -238,8 +262,11 @@ func (s *SQLStorage) DeleteEvaluationJob(ctx *executioncontext.ExecutionContext,
 	if !hardDelete {
 		return s.UpdateEvaluationJobStatus(ctx, id, &api.EvaluationJobStatus{
 			EvaluationJobState: api.EvaluationJobState{
-				State:   api.StateCancelled,
-				Message: "Evaluation job cancelled",
+				State: api.StateCancelled,
+				Message: &api.MessageInfo{
+					Message:     "Evaluation job cancelled",
+					MessageCode: constants.MESSAGE_CODE_EVALUATION_JOB_CANCELLED,
+				},
 			},
 		})
 	}

@@ -123,14 +123,11 @@ func (h *Handlers) HandleListEvaluations(ctx *executioncontext.ExecutionContext,
 		w.ErrorWithError(err, ctx.RequestID)
 		return
 	}
-	response, err := h.storage.GetEvaluationJobs(ctx, limit, offset, statusFilter)
+	response, err := h.storage.GetEvaluationJobs(ctx, r, limit, offset, statusFilter)
 	if err != nil {
 		w.ErrorWithError(err, ctx.RequestID)
 		return
 	}
-
-	// set the first href to the current request URL
-	response.Page.First = &api.HRef{Href: r.URI()} // ctx.Request.URI() is the full request URL which should include the query parameters
 
 	w.WriteJSON(response, 200)
 }
