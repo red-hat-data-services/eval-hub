@@ -126,7 +126,9 @@ func (s *SQLStorage) Close() error {
 }
 
 func (s *SQLStorage) WithLogger(logger *slog.Logger) abstractions.Storage {
-	newStorage := s
-	newStorage.logger = logger
-	return newStorage
+	return &SQLStorage{
+		sqlConfig: s.sqlConfig,
+		pool:      s.pool,
+		logger:    logger,
+	}
 }
