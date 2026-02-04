@@ -205,6 +205,7 @@ func TestRunEvaluationJobReturnsNilOnCreateFailure(t *testing.T) {
 
 	runtime := &K8sRuntime{
 		logger: logger,
+		ctx:    context.Background(),
 		helper: &KubernetesHelper{clientset: clientset},
 		providers: map[string]api.ProviderResource{
 			"lm_evaluation_harness": {
