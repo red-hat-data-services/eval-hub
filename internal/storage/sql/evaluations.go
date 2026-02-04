@@ -473,35 +473,36 @@ func updateOverallJobStatus(job *api.EvaluationJobResource) {
 }
 
 func updateBenchMarkProgress(_ *executioncontext.ExecutionContext, jobResource *api.EvaluationJobResource, runStatus *api.RunStatusInternal) {
-	findAndUpdateBenchmarkStatus(jobResource.Status.Benchmarks, runStatus)
+	jobResource.Status.Benchmarks = findAndUpdateBenchmarkStatus(jobResource.Status.Benchmarks, runStatus)
 	findAndUpdateBenchmarkResults(jobResource.Results, runStatus)
 }
 
-func findAndUpdateBenchmarkStatus(benchmarkStatus []api.BenchmarkStatus, runStatus *api.RunStatusInternal) {
+func findAndUpdateBenchmarkStatus(benchmarkStatus []api.BenchmarkStatus, runStatus *api.RunStatusInternal) []api.BenchmarkStatus {
 	found := false
 	for i := range benchmarkStatus {
 		status := &benchmarkStatus[i]
 		if status.Name == runStatus.StatusEvent.BenchmarkID || status.Name == runStatus.StatusEvent.BenchmarkName {
+			prevState := status.State
 			status.State = runStatus.StatusEvent.Status
 			if runStatus.StatusEvent.Artifacts != nil {
 				if logsPath, ok := runStatus.StatusEvent.Artifacts["logs"].(string); ok && logsPath != "" {
 					status.Logs = &api.BenchmarkStatusLogs{Path: logsPath}
 				}
-				if status.State == api.StatePending && runStatus.StatusEvent.Status == api.StateRunning {
-					status.StartedAt = runStatus.StatusEvent.StartedAt
-				}
-				if runStatus.StatusEvent.Status == api.StateCompleted {
-					status.CompletedAt = runStatus.StatusEvent.CompletedAt
-				}
-				if runStatus.StatusEvent.Status == api.StateFailed && runStatus.StatusEvent.ErrorMessage != nil {
-					status.Message = &api.MessageInfo{
-						Message:     runStatus.StatusEvent.ErrorMessage.Message,
-						MessageCode: runStatus.StatusEvent.ErrorMessage.MessageCode,
-					}
-				}
-				found = true
-				break
 			}
+			if prevState == api.StatePending && runStatus.StatusEvent.Status == api.StateRunning {
+				status.StartedAt = runStatus.StatusEvent.StartedAt
+			}
+			if runStatus.StatusEvent.Status == api.StateCompleted {
+				status.CompletedAt = runStatus.StatusEvent.CompletedAt
+			}
+			if runStatus.StatusEvent.Status == api.StateFailed && runStatus.StatusEvent.ErrorMessage != nil {
+				status.Message = &api.MessageInfo{
+					Message:     runStatus.StatusEvent.ErrorMessage.Message,
+					MessageCode: runStatus.StatusEvent.ErrorMessage.MessageCode,
+				}
+			}
+			found = true
+			break
 		}
 	}
 	if !found {
@@ -527,6 +528,7 @@ func findAndUpdateBenchmarkStatus(benchmarkStatus []api.BenchmarkStatus, runStat
 		}
 		benchmarkStatus = append(benchmarkStatus, newBenchmarkStatus)
 	}
+	return benchmarkStatus
 }
 
 func findAndUpdateBenchmarkResults(benchmarkResults *api.EvaluationJobResults, runStatus *api.RunStatusInternal) {
