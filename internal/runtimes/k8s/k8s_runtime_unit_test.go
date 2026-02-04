@@ -23,6 +23,12 @@ type fakeStorage struct {
 	ctx    context.Context
 }
 
+// UpdateEvaluationJob implements [abstractions.Storage].
+func (f *fakeStorage) UpdateEvaluationJob(id string, runStatus *api.RunStatusInternal) error {
+	f.called = true
+	return nil
+}
+
 func (f *fakeStorage) GetDatasourceName() string  { return "fake" }
 func (f *fakeStorage) Ping(_ time.Duration) error { return nil }
 func (f *fakeStorage) CreateEvaluationJob(_ *api.EvaluationJobConfig) (*api.EvaluationJobResource, error) {

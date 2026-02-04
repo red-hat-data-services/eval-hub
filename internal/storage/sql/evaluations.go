@@ -106,23 +106,19 @@ func (s *SQLStorage) GetEvaluationJob(id string) (*api.EvaluationJobResource, er
 	}
 
 	// Unmarshal the entity JSON into EvaluationJobConfig
-	var evaluationConfig api.EvaluationJobConfig
-	err = json.Unmarshal([]byte(entityJSON), &evaluationConfig)
+	var evaluationEntity EvaluationJobEntity
+	err = json.Unmarshal([]byte(entityJSON), &evaluationEntity)
 	if err != nil {
 		s.logger.Error("Failed to unmarshal evaluation job entity", "error", err, "id", id)
 		return nil, serviceerrors.NewServiceError(messages.JSONUnmarshalFailed, "Type", "evaluation job", "Error", err.Error())
 	}
 
-	evaluationResource := constructEvaluationResource(statusStr, dbID, createdAt, updatedAt, evaluationConfig)
+	evaluationResource := constructEvaluationResource(statusStr, dbID, createdAt, updatedAt, evaluationEntity)
 
 	return evaluationResource, nil
 }
 
-func constructEvaluationResource(statusStr string, dbID string, createdAt time.Time, updatedAt time.Time, evaluationConfig api.EvaluationJobConfig) *api.EvaluationJobResource {
-	status := api.State(statusStr)
-
-	// Construct the EvaluationJobResource
-	// Note: Results and Benchmarks are initialized with defaults since they're not stored in the entity column
+func constructEvaluationResource(statusStr string, dbID string, createdAt time.Time, updatedAt time.Time, evaluationEntity EvaluationJobEntity) *api.EvaluationJobResource {
 	evaluationResource := &api.EvaluationJobResource{
 		Resource: api.EvaluationResource{
 			Resource: api.Resource{
@@ -133,18 +129,9 @@ func constructEvaluationResource(statusStr string, dbID string, createdAt time.T
 			},
 			MLFlowExperimentID: nil,
 		},
-		EvaluationJobConfig: evaluationConfig,
-		Status: &api.EvaluationJobStatus{
-			EvaluationJobState: api.EvaluationJobState{
-				State: status,
-				Message: &api.MessageInfo{
-					Message:     "Evaluation job retrieved",
-					MessageCode: constants.MESSAGE_CODE_EVALUATION_JOB_RETRIEVED,
-				},
-			},
-			Benchmarks: nil, // TODO: retrieve benchmarks status from database
-		},
-		Results: nil, // TODO: retrieve results from database if needed
+		EvaluationJobConfig: *evaluationEntity.Config,
+		Status:              evaluationEntity.Status,
+		Results:             evaluationEntity.Results,
 	}
 	return evaluationResource
 }
@@ -173,8 +160,8 @@ func (s *SQLStorage) getEvaluationJobTransactional(txn *sql.Tx, id string) (*api
 	}
 
 	// Unmarshal the entity JSON into EvaluationJobConfig
-	var evaluationConfig api.EvaluationJobConfig
-	err = json.Unmarshal([]byte(entityJSON), &evaluationConfig)
+	var evaluationEntity EvaluationJobEntity
+	err = json.Unmarshal([]byte(entityJSON), &evaluationEntity)
 	if err != nil {
 		s.logger.Error("Failed to unmarshal evaluation job entity", "error", err, "id", id)
 		return nil, serviceerrors.NewServiceError(messages.JSONUnmarshalFailed, "Type", "evaluation job", "Error", err.Error())
