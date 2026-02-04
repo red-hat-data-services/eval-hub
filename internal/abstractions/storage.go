@@ -28,6 +28,7 @@ type Storage interface {
 	GetEvaluationJobs(limit int, offset int, statusFilter string) (*QueryResults[api.EvaluationJobResource], error)
 	DeleteEvaluationJob(id string, hardDelete bool) error
 	UpdateEvaluationJobStatus(id string, state *api.StatusEvent) error
+	UpdateEvaluationJob(id string, runStatus *api.RunStatusInternal) error
 
 	// Collection operations
 	CreateCollection(collection *api.CollectionResource) error
