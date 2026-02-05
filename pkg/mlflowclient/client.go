@@ -92,9 +92,19 @@ func (c *Client) doRequest(ctx context.Context, method, endpoint string, body in
 	}
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		mlflowError := MLFlowError{}
+		if err := json.Unmarshal(respBody, &mlflowError); err == nil {
+			apiErr := &APIError{
+				StatusCode:   resp.StatusCode,
+				ResponseBody: string(respBody),
+				MLFlowError:  &mlflowError,
+			}
+			return nil, apiErr
+		}
 		apiErr := &APIError{
 			StatusCode:   resp.StatusCode,
 			ResponseBody: string(respBody),
+			MLFlowError:  nil,
 		}
 		return nil, apiErr
 	}
@@ -114,7 +124,10 @@ func unmarshalResponse[T any](respBody []byte) (*T, error) {
 // Experiments API
 
 // CreateExperiment creates a new experiment
-func (c *Client) CreateExperiment(req CreateExperimentRequest) (*CreateExperimentResponse, error) {
+func (c *Client) CreateExperiment(req *CreateExperimentRequest) (*CreateExperimentResponse, error) {
+	if req == nil {
+		return nil, fmt.Errorf("Create experiment request is nil")
+	}
 	respBody, err := c.doRequest(c.Ctx, http.MethodPost, endpointExperimentsCreate, req)
 	if err != nil {
 		return nil, err
