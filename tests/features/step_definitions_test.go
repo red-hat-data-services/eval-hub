@@ -168,10 +168,14 @@ func (a *apiFeature) startLocalServer(port int) error {
 	logger.Info("Storage created.")
 
 	// set up the provider configs
-	providerConfigs, err := config.LoadProviderConfigs(logger, "../../../config/providers", "../../../../config/providers", "../../../../../config/providers")
+	providerConfigs, err := config.LoadProviderConfigs(logger, "../config/providers", "../../config/providers", "../../../config/providers")
 	if err != nil {
 		// we do this as no point trying to continue
 		return logError(fmt.Errorf("failed to load provider configs: %w", err))
+	}
+
+	if len(providerConfigs) == 0 {
+		return logError(fmt.Errorf("no provider configs loaded"))
 	}
 
 	logger.Info("Providers loaded.")
@@ -668,6 +672,11 @@ func (tc *scenarioConfig) theFieldShouldBeSaved(path string, name string) error 
 	return nil
 }
 
+func (tc *scenarioConfig) fixThisStep() error {
+	logDebug("TODO: fix this step")
+	return godog.ErrSkip
+}
+
 func (tc *scenarioConfig) saveScenarioName(ctx context.Context, sc *godog.Scenario) (context.Context, error) {
 	tc.scenarioName = sc.Name
 	return ctx, nil
@@ -795,4 +804,6 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the response should have schema as:$`, tc.theResponseShouldHaveSchemaAs)
 	ctx.Step(`^the "([^"]*)" field in the response should be saved as "([^"]*)"$`, tc.theFieldShouldBeSaved)
 	ctx.Step(`^the response should contain the value "([^"]*)" at path "([^"]*)"$`, tc.theResponseShouldContainAtJSONPath)
+	// Other steps
+	ctx.Step(`^fix this step$`, tc.fixThisStep)
 }

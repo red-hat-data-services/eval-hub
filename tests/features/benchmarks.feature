@@ -18,7 +18,6 @@ Feature: Benchmarks Endpoint
     When I send a GET request to "/api/v1/evaluations/benchmarks?benchmark_id=toxicity&provider_id=garak"
     Then the response should contain the value "1" at path "total_count"
 
-
   Scenario: Get benchmarks for provider_id
     Given the service is running
     When I send a GET request to "/api/v1/evaluations/benchmarks?provider_id=garak"
