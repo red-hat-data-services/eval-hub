@@ -87,14 +87,25 @@ type BenchmarkStatusLogs struct {
 	Path string `json:"path,omitempty"`
 }
 
+// for marshalling and unmarshalling
+type DateTime string
+
+func DateTimeToString(date time.Time) DateTime {
+	return DateTime(date.Format("2006-01-02T15:04:05Z07:00"))
+}
+
+func DateTimeFromString(date DateTime) (time.Time, error) {
+	return time.Parse("2006-01-02T15:04:05Z07:00", string(date))
+}
+
 // BenchmarkStatus represents status of individual benchmark in evaluation
 type BenchmarkStatus struct {
 	ProviderID   string       `json:"provider_id"`
 	ID           string       `json:"id"`
 	Status       State        `json:"status,omitempty"`
 	ErrorMessage *MessageInfo `json:"error_message,omitempty"`
-	StartedAt    *time.Time   `json:"started_at,omitempty"`
-	CompletedAt  *time.Time   `json:"completed_at,omitempty"`
+	StartedAt    DateTime     `json:"started_at,omitempty" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
+	CompletedAt  DateTime     `json:"completed_at,omitempty" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
 }
 
 // BenchmarkStatusEvent is used when the job runtime needs to updated the status of a benchmark
@@ -105,8 +116,8 @@ type BenchmarkStatusEvent struct {
 	Metrics      map[string]any `json:"metrics,omitempty"`
 	Artifacts    map[string]any `json:"artifacts,omitempty"`
 	ErrorMessage *MessageInfo   `json:"error_message,omitempty"`
-	StartedAt    *time.Time     `json:"started_at,omitempty"`
-	CompletedAt  *time.Time     `json:"completed_at,omitempty"`
+	StartedAt    DateTime       `json:"started_at,omitempty" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
+	CompletedAt  DateTime       `json:"completed_at,omitempty" validate:"omitempty,datetime=2006-01-02T15:04:05Z07:00"`
 	MLFlowRunID  string         `json:"mlflow_run_id,omitempty"`
 	LogsPath     string         `json:"logs_path,omitempty"`
 }
