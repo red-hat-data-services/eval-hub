@@ -491,98 +491,6 @@
         "title": "PaginationLink",
         "description": "Hypermedia link used for pagination."
       },
-      "ErrorMessage": {
-        "type": "object",
-        "properties": {
-          "message": {
-            "type": "string",
-            "description": "Details of the error.",
-            "title": "Message"
-          },
-          "message_code": {
-            "type": "string",
-            "description": "Code for the error",
-            "title": "Message Code"
-          }
-        },
-        "additionalProperties": true,
-        "required": [
-          "message",
-          "message_code"
-        ],
-        "title": "ErrorMessage",
-        "description": "Error message for a job."
-      },
-      "RunStatus": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name",
-            "description": "User-provided benchmark name"
-          },
-          "state": {
-            "type": "string",
-            "title": "State",
-            "description": "Run state (pending, running, success, failed)"
-          },
-          "message": {
-            "$ref": "#/components/schemas/ErrorMessage"
-          },
-          "logs_path": {
-            "type": "string",
-            "title": "Logs Path",
-            "description": "Optional path to run-specific logs"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "name",
-          "state"
-        ],
-        "title": "RunStatus",
-        "description": "Status information for an individual benchmark run."
-      },
-      "Status": {
-        "properties": {
-          "state": {
-            "type": "string",
-            "title": "State",
-            "description": "Overall state of the request",
-            "enum": [
-              "pending",
-              "running",
-              "completed",
-              "partially_failed",
-              "failed",
-              "cancelled"
-            ]
-          },
-          "message": {
-            "$ref": "#/components/schemas/ErrorMessage"
-          },
-          "logs_path": {
-            "type": "string",
-            "title": "Logs Path",
-            "description": "Optional path to system logs"
-          },
-          "runs": {
-            "items": {
-              "$ref": "#/components/schemas/RunStatus"
-            },
-            "type": "array",
-            "title": "Runs",
-            "description": "Status for each benchmark run"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "state"
-        ],
-        "title": "Status",
-        "description": "Overall status for an evaluation request."
-      },
       "ResourceInfo": {
         "type": "object",
         "properties": {
@@ -590,10 +498,6 @@
             "type": "string",
             "title": "Id",
             "description": "Unique evaluation request ID"
-          },
-          "status": {
-            "$ref": "#/components/schemas/Status",
-            "description": "Current status of the request"
           },
           "created_at": {
             "type": "string",
@@ -610,7 +514,6 @@
         },
         "required": [
           "id",
-          "status",
           "created_at"
         ],
         "title": "ResourceInfo",
@@ -638,12 +541,51 @@
         "title": "EvaluationResource",
         "description": "Resource information for an evaluation."
       },
-      "BenchmarkResultPayload": {
+      "ErrorMessage": {
+        "type": "object",
         "properties": {
-          "name": {
+          "message": {
             "type": "string",
-            "title": "Name",
-            "description": "Benchmark name"
+            "description": "Details of the error.",
+            "title": "Message"
+          },
+          "message_code": {
+            "type": "string",
+            "description": "Code for the error",
+            "title": "Message Code"
+          }
+        },
+        "additionalProperties": true,
+        "required": [
+          "message",
+          "message_code"
+        ],
+        "title": "ErrorMessage",
+        "description": "Error message for a job."
+      },
+      "BenchmarkRunStatus": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Benchmark Id",
+            "description": "Benchmark id"
+          },
+          "provider_id": {
+            "type": "string",
+            "title": "Provider Id",
+            "description": "Provider id"
+          },
+          "status": {
+            "type": "string",
+            "title": "State",
+            "description": "Run state",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
           },
           "metrics": {
             "additionalProperties": {
@@ -659,7 +601,6 @@
                 }
               ]
             },
-            "type": "object",
             "title": "Metrics",
             "description": "Benchmark metrics"
           },
@@ -667,29 +608,106 @@
             "additionalProperties": {
               "type": "string"
             },
-            "type": "object",
             "title": "Artifacts",
             "description": "Benchmark artifacts"
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At",
+            "description": "Start timestamp"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Completed At",
+            "description": "Completion timestamp"
+          },
+          "duration_seconds": {
+            "type": "number",
+            "title": "Duration Seconds",
+            "description": "Evaluation duration"
           },
           "mlflow_run_id": {
             "type": "string",
             "title": "Mlflow Run Id",
             "description": "MLFlow run ID"
+          },
+          "error_message": {
+            "$ref": "#/components/schemas/ErrorMessage"
+          },
+          "logs_path": {
+            "type": "string",
+            "title": "Logs Path",
+            "description": "Optional path to run-specific logs"
           }
         },
         "additionalProperties": true,
         "type": "object",
         "required": [
-          "name"
+          "id",
+          "provider_id",
+          "status",
+          "started_at"
         ],
-        "title": "BenchmarkResultPayload",
-        "description": "Result payload for a single benchmark."
+        "title": "RunStatus",
+        "description": "Status information for an individual benchmark run."
+      },
+      "EvaluationJobStatus": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "title": "State",
+            "description": "Overall state of the request",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "partially_failed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "message": {
+            "$ref": "#/components/schemas/ErrorMessage"
+          },
+          "benchmarks": {
+            "items": {
+              "$ref": "#/components/schemas/BenchmarkRunStatus"
+            },
+            "type": "array",
+            "title": "Benchmark run statuses",
+            "description": "Status for each benchmark run"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "title": "Status",
+        "description": "Overall status for an evaluation request."
       },
       "ResultsPayload": {
         "properties": {
+          "total_evaluations": {
+            "type": "integer",
+            "title": "Total Evaluations",
+            "description": "Total number of evaluations"
+          },
+          "completed_evaluations": {
+            "type": "integer",
+            "title": "Completed Evaluations",
+            "description": "Number of completed evaluations"
+          },
+          "failed_evaluations": {
+            "type": "integer",
+            "title": "Failed Evaluations",
+            "description": "Number of failed evaluations"
+          },
           "benchmarks": {
             "items": {
-              "$ref": "#/components/schemas/BenchmarkResultPayload"
+              "$ref": "#/components/schemas/BenchmarkRunStatus"
             },
             "type": "array",
             "title": "Benchmarks",
@@ -729,6 +747,10 @@
         "properties": {
           "resource": {
             "$ref": "#/components/schemas/EvaluationResource"
+          },
+          "status": {
+            "$ref": "#/components/schemas/EvaluationJobStatus",
+            "description": "Current status of the request"
           },
           "results": {
             "$ref": "#/components/schemas/ResultsPayload"

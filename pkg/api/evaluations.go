@@ -99,6 +99,7 @@ type BenchmarkStatus struct {
 	CompletedAt     *time.Time     `json:"completed_at,omitempty"`
 	DurationSeconds int64          `json:"duration_seconds,omitempty"`
 	MLFlowRunID     string         `json:"mlflow_run_id,omitempty"`
+	LogsPath        string         `json:"logs_path,omitempty"`
 }
 
 type EvaluationJobState struct {
@@ -133,15 +134,20 @@ type EvaluationJobConfig struct {
 type EvaluationResource struct {
 	Resource
 	MLFlowExperimentID string       `json:"mlflow_experiment_id,omitempty"`
-	Status             OverallState `json:"status"`
 	Message            *MessageInfo `json:"message,omitempty"`
+}
+
+type EvaluationJobStatus struct {
+	EvaluationJobState
+	Benchmarks []BenchmarkStatus `json:"benchmarks,omitempty"`
 }
 
 // EvaluationJobResource represents evaluation job resource response
 type EvaluationJobResource struct {
-	Resource EvaluationResource `json:"resource"`
+	Resource EvaluationResource    `json:"resource"`
+	Status   *EvaluationJobStatus  `json:"status,omitempty"`
+	Results  *EvaluationJobResults `json:"results,omitempty"`
 	EvaluationJobConfig
-	Results *EvaluationJobResults `json:"results,omitempty"`
 }
 
 // EvaluationJobResourceList represents list of evaluation job resources with pagination
