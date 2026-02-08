@@ -275,10 +275,13 @@ func (s *SQLStorage) UpdateEvaluationJobStatus(id string, state api.OverallState
 		s.logger.Error("Failed to begin update evaluation job statustransaction", "error", err, "id", id)
 		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
 	}
+	committed := false
 	defer func() {
-		err := txn.Rollback()
-		if err != nil {
-			s.logger.Error("Failed to rollback update evaluation job status transaction", "error", err, "id", id)
+		if !committed {
+			err := txn.Rollback()
+			if err != nil {
+				s.logger.Error("Failed to rollback update evaluation job status transaction", "error", err, "id", id)
+			}
 		}
 	}()
 
@@ -304,7 +307,9 @@ func (s *SQLStorage) UpdateEvaluationJobStatus(id string, state api.OverallState
 		s.logger.Error("Failed to commit update evaluation job status transaction", "error", err, "id", id)
 		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
 	}
+	committed = true
 
+	s.logger.Info("Committed update evaluation job status transaction", "id", id)
 	return nil
 }
 
