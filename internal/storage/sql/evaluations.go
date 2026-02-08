@@ -20,8 +20,8 @@ import (
 )
 
 type EvaluationJobEntity struct {
-	Config  *api.EvaluationJobConfig  `json:"config"`
-	Status  *api.EvaluationJobStatus  `json:"status"`
+	Config  *api.EvaluationJobConfig  `json:"config" validate:"required"`
+	Status  *api.EvaluationJobStatus  `json:"status,omitempty"`
 	Results *api.EvaluationJobResults `json:"results,omitempty"`
 }
 
@@ -288,13 +288,14 @@ func (s *SQLStorage) UpdateEvaluationJobStatus(id string, state api.OverallState
 	}
 	evaluationJob.Status.State = state
 	evaluationJob.Status.Message = message
-	evaluationJobJSON, err := json.Marshal(evaluationJob)
-	if err != nil {
-		// we should never get here
-		return serviceerrors.NewServiceError(messages.InternalServerError, "Error", err.Error())
+
+	entity := EvaluationJobEntity{
+		Config:  &evaluationJob.EvaluationJobConfig,
+		Status:  evaluationJob.Status,
+		Results: evaluationJob.Results,
 	}
 
-	err = s.updateEvaluationJobTransactional(txn, id, state, string(evaluationJobJSON))
+	err = s.updateEvaluationJobTransactional(txn, id, state, &entity)
 	if err != nil {
 		return err
 	}
@@ -307,8 +308,13 @@ func (s *SQLStorage) UpdateEvaluationJobStatus(id string, state api.OverallState
 	return nil
 }
 
-func (s *SQLStorage) updateEvaluationJobTransactional(txn *sql.Tx, id string, status api.OverallState, entityJSON string) error {
-	updateQuery, args, err := CreateUpdateEvaluationStatement(s.sqlConfig.Driver, TABLE_EVALUATIONS, id, status, entityJSON)
+func (s *SQLStorage) updateEvaluationJobTransactional(txn *sql.Tx, id string, status api.OverallState, evaluationJob *EvaluationJobEntity) error {
+	entityJSON, err := json.Marshal(evaluationJob)
+	if err != nil {
+		// we should never get here
+		return serviceerrors.NewServiceError(messages.InternalServerError, "Error", err.Error())
+	}
+	updateQuery, args, err := CreateUpdateEvaluationStatement(s.sqlConfig.Driver, TABLE_EVALUATIONS, id, status, string(entityJSON))
 	if err != nil {
 		return err
 	}
@@ -387,27 +393,25 @@ func (s *SQLStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) 
 	}
 
 	// first we store the benchmark status
-	// use unkeyed struct to avoid missing any fields
 	benchmark := api.BenchmarkStatus{
-		runStatus.BenchmarkStatusEvent.ProviderID,
-		runStatus.BenchmarkStatusEvent.ID,
-		runStatus.BenchmarkStatusEvent.Status,
-		runStatus.BenchmarkStatusEvent.ErrorMessage,
-		runStatus.BenchmarkStatusEvent.StartedAt,
-		runStatus.BenchmarkStatusEvent.CompletedAt,
+		ProviderID:   runStatus.BenchmarkStatusEvent.ProviderID,
+		ID:           runStatus.BenchmarkStatusEvent.ID,
+		Status:       runStatus.BenchmarkStatusEvent.Status,
+		ErrorMessage: runStatus.BenchmarkStatusEvent.ErrorMessage,
+		StartedAt:    runStatus.BenchmarkStatusEvent.StartedAt,
+		CompletedAt:  runStatus.BenchmarkStatusEvent.CompletedAt,
 	}
 	updateBenchmarkStatus(job, runStatus, &benchmark)
 
 	// if the run status is completed, failed, or cancelled, we need to update the results
-	// use unkeyed struct to avoid missing any fields
 	if runStatus.BenchmarkStatusEvent.Status == api.StateCompleted || runStatus.BenchmarkStatusEvent.Status == api.StateFailed || runStatus.BenchmarkStatusEvent.Status == api.StateCancelled {
 		result := api.BenchmarkResult{
-			runStatus.BenchmarkStatusEvent.ID,
-			runStatus.BenchmarkStatusEvent.ProviderID,
-			runStatus.BenchmarkStatusEvent.Metrics,
-			runStatus.BenchmarkStatusEvent.Artifacts,
-			runStatus.BenchmarkStatusEvent.MLFlowRunID,
-			runStatus.BenchmarkStatusEvent.LogsPath,
+			ID:          runStatus.BenchmarkStatusEvent.ID,
+			ProviderID:  runStatus.BenchmarkStatusEvent.ProviderID,
+			Metrics:     runStatus.BenchmarkStatusEvent.Metrics,
+			Artifacts:   runStatus.BenchmarkStatusEvent.Artifacts,
+			MLFlowRunID: runStatus.BenchmarkStatusEvent.MLFlowRunID,
+			LogsPath:    runStatus.BenchmarkStatusEvent.LogsPath,
 		}
 		updateBenchmarkResults(job, runStatus, &result)
 	}
@@ -417,12 +421,13 @@ func (s *SQLStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) 
 	job.Status.State = overallState
 	job.Status.Message = message
 
-	updatedEntityJSON, err := json.Marshal(job)
-	if err != nil {
-		s.logger.Error("Failed to marshal updated job resource", "error", err, "id", id)
-		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
+	entity := EvaluationJobEntity{
+		Config:  &job.EvaluationJobConfig,
+		Status:  job.Status,
+		Results: job.Results,
 	}
-	if err := s.updateEvaluationJobTransactional(txn, id, overallState, string(updatedEntityJSON)); err != nil {
+
+	if err := s.updateEvaluationJobTransactional(txn, id, overallState, &entity); err != nil {
 		return err
 	}
 
