@@ -121,6 +121,9 @@ func (s *SQLStorage) constructEvaluationResource(statusStr string, message *api.
 		s.logger.Error("Failed to construct evaluation job resource", "error", "Evaluation config does not exist", "id", dbID)
 		return nil, serviceerrors.NewServiceError(messages.InternalServerError, "Error", "Evaluation config does not exist")
 	}
+	if evaluationEntity.Status == nil {
+		evaluationEntity.Status = &api.EvaluationJobStatus{}
+	}
 
 	if message == nil {
 		message = evaluationEntity.Status.Message
