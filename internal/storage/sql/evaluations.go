@@ -87,7 +87,16 @@ func (s *SQLStorage) GetEvaluationJob(id string) (*api.EvaluationJobResource, er
 	return s.getEvaluationJobTransactional(nil, id)
 }
 
-func constructEvaluationResource(statusStr string, message *api.MessageInfo, dbID string, createdAt time.Time, updatedAt time.Time, experimentID string, evaluationEntity EvaluationJobEntity) *api.EvaluationJobResource {
+func (s *SQLStorage) constructEvaluationResource(statusStr string, message *api.MessageInfo, dbID string, createdAt time.Time, updatedAt time.Time, experimentID string, evaluationEntity *EvaluationJobEntity) (*api.EvaluationJobResource, error) {
+	if evaluationEntity == nil {
+		s.logger.Error("Failed to construct evaluation job resource", "error", "Evaluation entity does not exist", "id", dbID)
+		return nil, serviceerrors.NewServiceError(messages.InternalServerError, "Error", "Evaluation entity does not exist")
+	}
+	if evaluationEntity.Config == nil {
+		s.logger.Error("Failed to construct evaluation job resource", "error", "Evaluation config does not exist", "id", dbID)
+		return nil, serviceerrors.NewServiceError(messages.InternalServerError, "Error", "Evaluation config does not exist")
+	}
+
 	if message == nil {
 		message = evaluationEntity.Status.Message
 	}
@@ -116,7 +125,7 @@ func constructEvaluationResource(statusStr string, message *api.MessageInfo, dbI
 		EvaluationJobConfig: *evaluationEntity.Config,
 		Results:             evaluationEntity.Results,
 	}
-	return evaluationResource
+	return evaluationResource, nil
 }
 
 func (s *SQLStorage) getEvaluationJobTransactional(txn *sql.Tx, id string) (*api.EvaluationJobResource, error) {
@@ -148,16 +157,14 @@ func (s *SQLStorage) getEvaluationJobTransactional(txn *sql.Tx, id string) (*api
 	}
 
 	// Unmarshal the entity JSON into EvaluationJobConfig
-	var evaluationEntity EvaluationJobEntity
-	err = json.Unmarshal([]byte(entityJSON), &evaluationEntity)
+	var evaluationJobEntity EvaluationJobEntity
+	err = json.Unmarshal([]byte(entityJSON), &evaluationJobEntity)
 	if err != nil {
 		s.logger.Error("Failed to unmarshal evaluation job entity", "error", err, "id", id)
 		return nil, serviceerrors.NewServiceError(messages.JSONUnmarshalFailed, "Type", "evaluation job", "Error", err.Error())
 	}
 
-	evaluationResource := constructEvaluationResource(statusStr, nil, dbID, createdAt, updatedAt, experimentID, evaluationEntity)
-
-	return evaluationResource, nil
+	return s.constructEvaluationResource(statusStr, nil, dbID, createdAt, updatedAt, experimentID, &evaluationJobEntity)
 }
 
 func (s *SQLStorage) GetEvaluationJobs(limit int, offset int, statusFilter string) (*abstractions.QueryResults[api.EvaluationJobResource], error) {
@@ -216,24 +223,13 @@ func (s *SQLStorage) GetEvaluationJobs(limit int, offset int, statusFilter strin
 		}
 
 		// Construct the EvaluationJobResource
-		// Note: Results and Benchmarks are initialized with defaults since they're not stored in the entity column
-		resource := api.EvaluationJobResource{
-			Resource: api.EvaluationResource{
-				Resource: api.Resource{
-					ID:        dbID,
-					Tenant:    "TODO", // TODO: 	retrieve tenant from database or context
-					CreatedAt: createdAt,
-					UpdatedAt: updatedAt,
-				},
-				MLFlowExperimentID: experimentID,
-				Message:            evaluationJobEntity.Status.Message,
-			},
-			Status:              evaluationJobEntity.Status,
-			Results:             evaluationJobEntity.Results,
-			EvaluationJobConfig: *evaluationJobEntity.Config,
+		resource, err := s.constructEvaluationResource(statusStr, nil, dbID, createdAt, updatedAt, experimentID, &evaluationJobEntity)
+		if err != nil {
+			s.logger.Error("Failed to construct evaluation job resource", "error", err, "id", dbID)
+			return nil, serviceerrors.NewServiceError(messages.InternalServerError, "Error", err.Error())
 		}
 
-		items = append(items, resource)
+		items = append(items, *resource)
 	}
 
 	if err = rows.Err(); err != nil {

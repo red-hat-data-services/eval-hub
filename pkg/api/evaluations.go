@@ -157,6 +157,7 @@ type EvaluationJobConfig struct {
 	Experiment     *ExperimentConfig `json:"experiment,omitempty"`
 	TimeoutMinutes *int              `json:"timeout_minutes,omitempty"`
 	RetryAttempts  *int              `json:"retry_attempts,omitempty"`
+	Custom         map[string]any    `json:"custom,omitempty"`
 }
 
 type EvaluationResource struct {
