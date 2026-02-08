@@ -323,7 +323,7 @@ func (s *SQLStorage) updateEvaluationJobTransactional(txn *sql.Tx, id string, st
 	return nil
 }
 
-func getBenchmarkStatus(job *api.EvaluationJobResource, runStatus *api.StatusEvent) *api.BenchmarkStatus {
+func updateBenchmarkStatus(job *api.EvaluationJobResource, runStatus *api.StatusEvent, benchmark *api.BenchmarkStatus) {
 	if job.Status == nil {
 		job.Status = &api.EvaluationJobStatus{
 			EvaluationJobState: api.EvaluationJobState{
@@ -332,33 +332,31 @@ func getBenchmarkStatus(job *api.EvaluationJobResource, runStatus *api.StatusEve
 		}
 	}
 	if job.Status.Benchmarks == nil {
-		job.Status.Benchmarks = make([]api.BenchmarkStatus, 0)
+		job.Status.Benchmarks = make([]*api.BenchmarkStatus, 0)
 	}
-	for _, benchmark := range job.Status.Benchmarks {
+	for index, benchmark := range job.Status.Benchmarks {
 		if benchmark.ID == runStatus.BenchmarkStatusEvent.ID {
-			return &benchmark
+			job.Status.Benchmarks[index] = benchmark
+			return
 		}
 	}
-	benchmark := api.BenchmarkStatus{}
 	job.Status.Benchmarks = append(job.Status.Benchmarks, benchmark)
-	return &benchmark
 }
 
-func getBenchmarkResults(job *api.EvaluationJobResource, runStatus *api.StatusEvent) *api.BenchmarkResult {
+func updateBenchmarkResults(job *api.EvaluationJobResource, runStatus *api.StatusEvent, result *api.BenchmarkResult) {
 	if job.Results == nil {
 		job.Results = &api.EvaluationJobResults{}
 	}
 	if job.Results.Benchmarks == nil {
-		job.Results.Benchmarks = make([]api.BenchmarkResult, 0)
+		job.Results.Benchmarks = make([]*api.BenchmarkResult, 0)
 	}
-	for _, benchmark := range job.Results.Benchmarks {
+	for index, benchmark := range job.Results.Benchmarks {
 		if benchmark.ID == runStatus.BenchmarkStatusEvent.ID {
-			return &benchmark
+			job.Results.Benchmarks[index] = result
+			return
 		}
 	}
-	benchmark := api.BenchmarkResult{}
-	job.Results.Benchmarks = append(job.Results.Benchmarks, benchmark)
-	return &benchmark
+	job.Results.Benchmarks = append(job.Results.Benchmarks, result)
 }
 
 // UpdateEvaluationJobWithRunStatus runs in a transaction: fetches the job, merges RunStatusInternal into the entity, and persists.
@@ -368,10 +366,13 @@ func (s *SQLStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) 
 		s.logger.Error("Failed to begin update evaluation job transaction", "error", err, "id", id)
 		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
 	}
+	committed := false
 	defer func() {
-		err := txn.Rollback()
-		if err != nil {
-			s.logger.Error("Failed to rollback update evaluation job transaction", "error", err, "id", id)
+		if !committed {
+			err := txn.Rollback()
+			if err != nil {
+				s.logger.Error("Failed to rollback update evaluation job transaction", "error", err, "id", id)
+			}
 		}
 	}()
 
@@ -386,25 +387,30 @@ func (s *SQLStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) 
 	}
 
 	// first we store the benchmark status
-	benchmarkStatus := getBenchmarkStatus(job, runStatus)
-	benchmarkStatus.Status = runStatus.BenchmarkStatusEvent.Status
-	benchmarkStatus.StartedAt = runStatus.BenchmarkStatusEvent.StartedAt
-	benchmarkStatus.CompletedAt = runStatus.BenchmarkStatusEvent.CompletedAt
-	benchmarkStatus.ErrorMessage = runStatus.BenchmarkStatusEvent.ErrorMessage
-	benchmarkStatus.ProviderID = runStatus.BenchmarkStatusEvent.ProviderID
+	// use unkeyed struct to avoid missing any fields
+	benchmark := api.BenchmarkStatus{
+		runStatus.BenchmarkStatusEvent.ProviderID,
+		runStatus.BenchmarkStatusEvent.ID,
+		runStatus.BenchmarkStatusEvent.Status,
+		runStatus.BenchmarkStatusEvent.ErrorMessage,
+		runStatus.BenchmarkStatusEvent.StartedAt,
+		runStatus.BenchmarkStatusEvent.CompletedAt,
+	}
+	updateBenchmarkStatus(job, runStatus, &benchmark)
 
 	// if the run status is completed, failed, or cancelled, we need to update the results
+	// use unkeyed struct to avoid missing any fields
 	if runStatus.BenchmarkStatusEvent.Status == api.StateCompleted || runStatus.BenchmarkStatusEvent.Status == api.StateFailed || runStatus.BenchmarkStatusEvent.Status == api.StateCancelled {
-		benchmarkResults := getBenchmarkResults(job, runStatus)
-		benchmarkResults.Metrics = runStatus.BenchmarkStatusEvent.Metrics
-		benchmarkResults.Artifacts = runStatus.BenchmarkStatusEvent.Artifacts
-		benchmarkResults.MLFlowRunID = runStatus.BenchmarkStatusEvent.MLFlowRunID
-		benchmarkResults.LogsPath = runStatus.BenchmarkStatusEvent.LogsPath
-		benchmarkResults.ProviderID = runStatus.BenchmarkStatusEvent.ProviderID
-		benchmarkResults.ID = runStatus.BenchmarkStatusEvent.ID
+		result := api.BenchmarkResult{
+			runStatus.BenchmarkStatusEvent.ID,
+			runStatus.BenchmarkStatusEvent.ProviderID,
+			runStatus.BenchmarkStatusEvent.Metrics,
+			runStatus.BenchmarkStatusEvent.Artifacts,
+			runStatus.BenchmarkStatusEvent.MLFlowRunID,
+			runStatus.BenchmarkStatusEvent.LogsPath,
+		}
+		updateBenchmarkResults(job, runStatus, &result)
 	}
-
-	// updateBenchMarkProgress(job, runStatus)
 
 	// get the overall job status
 	overallState, message := getOverallJobStatus(job)
@@ -424,6 +430,7 @@ func (s *SQLStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) 
 		s.logger.Error("Failed to commit update evaluation job transaction", "error", err, "id", id)
 		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", id, "Error", err.Error())
 	}
+	committed = true
 	return nil
 }
 
@@ -474,83 +481,5 @@ func getOverallJobStatus(job *api.EvaluationJobResource) (api.OverallState, *api
 	return overallState, &api.MessageInfo{
 		Message:     stateMessage,
 		MessageCode: constants.MESSAGE_CODE_EVALUATION_JOB_UPDATED,
-	}
-}
-
-func updateBenchMarkProgress(jobResource *api.EvaluationJobResource, runStatus *api.StatusEvent) {
-	if jobResource.Results == nil {
-		jobResource.Results = &api.EvaluationJobResults{}
-	}
-	jobResource.Status.Benchmarks = findAndUpdateBenchmarkStatus(jobResource.Status.Benchmarks, runStatus)
-	findAndUpdateBenchmarkResults(jobResource.Results, runStatus)
-}
-
-func findAndUpdateBenchmarkStatus(benchmarkStatus []api.BenchmarkStatus, runStatus *api.StatusEvent) []api.BenchmarkStatus {
-	found := false
-	for i := range benchmarkStatus {
-		status := &benchmarkStatus[i]
-		if status.ID == runStatus.BenchmarkStatusEvent.ID {
-			prevStatus := status.Status
-			status.Status = runStatus.BenchmarkStatusEvent.Status
-			if prevStatus == api.StatePending && runStatus.BenchmarkStatusEvent.Status == api.StateRunning {
-				status.StartedAt = runStatus.BenchmarkStatusEvent.StartedAt
-			}
-			if runStatus.BenchmarkStatusEvent.Status == api.StateCompleted {
-				status.CompletedAt = runStatus.BenchmarkStatusEvent.CompletedAt
-			}
-			if runStatus.BenchmarkStatusEvent.Status == api.StateFailed && runStatus.BenchmarkStatusEvent.ErrorMessage != nil {
-				status.ErrorMessage = &api.MessageInfo{
-					Message:     runStatus.BenchmarkStatusEvent.ErrorMessage.Message,
-					MessageCode: runStatus.BenchmarkStatusEvent.ErrorMessage.MessageCode,
-				}
-			}
-			found = true
-			break
-		}
-	}
-	if !found {
-		// if the benchmark is not found, create a new benchmark status
-		newBenchmarkStatus := api.BenchmarkStatus{
-			ProviderID: runStatus.BenchmarkStatusEvent.ProviderID,
-			ID:         runStatus.BenchmarkStatusEvent.ID,
-			Status:     runStatus.BenchmarkStatusEvent.Status,
-		}
-		if runStatus.BenchmarkStatusEvent.Status == api.StateFailed && runStatus.BenchmarkStatusEvent.ErrorMessage != nil {
-			newBenchmarkStatus.ErrorMessage = &api.MessageInfo{
-				Message:     runStatus.BenchmarkStatusEvent.ErrorMessage.Message,
-				MessageCode: runStatus.BenchmarkStatusEvent.ErrorMessage.MessageCode,
-			}
-		}
-		benchmarkStatus = append(benchmarkStatus, newBenchmarkStatus)
-	}
-	return benchmarkStatus
-}
-
-func findAndUpdateBenchmarkResults(benchmarkResults *api.EvaluationJobResults, runStatus *api.StatusEvent) {
-	if benchmarkResults == nil {
-		return
-	}
-	found := false
-	for i := range benchmarkResults.Benchmarks {
-		result := &benchmarkResults.Benchmarks[i]
-		if result.ID == runStatus.BenchmarkStatusEvent.ID {
-			if runStatus.BenchmarkStatusEvent.Status == api.StateCompleted {
-				result.Metrics = runStatus.BenchmarkStatusEvent.Metrics
-				result.Artifacts = runStatus.BenchmarkStatusEvent.Artifacts
-			}
-			found = true
-			break
-		}
-	}
-	if !found {
-		newBenchmarkResult := api.BenchmarkResult{
-			ProviderID:  runStatus.BenchmarkStatusEvent.ProviderID,
-			ID:          runStatus.BenchmarkStatusEvent.ID,
-			Metrics:     runStatus.BenchmarkStatusEvent.Metrics,
-			Artifacts:   runStatus.BenchmarkStatusEvent.Artifacts,
-			MLFlowRunID: runStatus.BenchmarkStatusEvent.MLFlowRunID,
-			LogsPath:    runStatus.BenchmarkStatusEvent.LogsPath,
-		}
-		benchmarkResults.Benchmarks = append(benchmarkResults.Benchmarks, newBenchmarkResult)
 	}
 }
