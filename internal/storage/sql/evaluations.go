@@ -372,7 +372,7 @@ func updateBenchmarkStatus(job *api.EvaluationJobResource, runStatus *api.Status
 	}
 	for index, benchmark := range job.Status.Benchmarks {
 		if benchmark.ID == runStatus.BenchmarkStatusEvent.ID {
-			job.Status.Benchmarks[index] = benchmark
+			job.Status.Benchmarks[index] = benchmarkStatus
 			return
 		}
 	}
