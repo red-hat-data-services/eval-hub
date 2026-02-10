@@ -1,0 +1,26 @@
+properties:
+  status:
+    type: string
+    title: Status
+    description: Overall health status
+  timestamp:
+    type: string
+    format: date-time
+    title: Timestamp
+    description: Health check timestamp
+  #version:
+  #  type: string
+  #  title: Version
+  #  description: Service version
+  #uptime_seconds:
+  #  type: number
+  #  title: Uptime Seconds
+  #  description: Service uptime in seconds
+type: object
+required:
+  - status
+  - timestamp
+  # - version
+  # - uptime_seconds
+title: HealthResponse
+description: Health check response.

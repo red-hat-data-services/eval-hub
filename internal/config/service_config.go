@@ -7,4 +7,5 @@ type ServiceConfig struct {
 	Port            int    `mapstructure:"port,omitempty"`
 	ReadyFile       string `mapstructure:"ready_file"`
 	TerminationFile string `mapstructure:"termination_file"`
+	LocalMode       bool   `mapstructure:"local_mode,omitempty"`
 }

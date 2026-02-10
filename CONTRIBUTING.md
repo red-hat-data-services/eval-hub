@@ -31,8 +31,8 @@ Eval Hub is an API REST server that serves as a routing and orchestration layer 
 ### Prerequisites
 
 **Required for All Development:**
-- Python 3.12+
-- [uv](https://github.com/astral-sh/uv) for dependency management
+- Go 1.25.0+
+- [Make](https://www.gnu.org/software/make/) for build automation
 - Git
 
 **Optional for Container Testing:**
@@ -50,20 +50,17 @@ Eval Hub is an API REST server that serves as a routing and orchestration layer 
    cd eval-hub
    ```
 
-2. **Set up Development Environment**
+2. **Install Dependencies**
    ```bash
-   # Create virtual environment
-   uv venv
-   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
-
-   # Install development dependencies
-   uv pip install -e ".[dev]"
+   # Download and tidy Go dependencies
+   make install-deps
    ```
 
 3. **Configure Environment**
    ```bash
    cp .env.example .env
    # Edit .env with your local configuration
+   # Or edit config/config.yaml directly
    ```
 
 4. **Install Pre-commit Hooks**
@@ -74,10 +71,13 @@ Eval Hub is an API REST server that serves as a routing and orchestration layer 
 5. **Verify Setup**
    ```bash
    # Run tests to verify everything works
-   pytest
+   make test
 
-   # Start the development server
-   python -m eval_hub.main
+   # Start the development server (default port 8080)
+   make start-service
+
+   # Or use a custom port
+   PORT=3000 make start-service
    ```
 
 ## How to Contribute
@@ -171,92 +171,96 @@ We use automated tools to maintain code quality:
 
 ```bash
 # Format code
-black src/ tests/
+make fmt
 
 # Lint code
-ruff src/ tests/
+make lint
 
-# Type checking
-mypy src/
+# Vet code
+make vet
 
 # Run all quality checks
 pre-commit run --all-files
 ```
 
-### Python Standards
+### Go Standards
 
-- **Python Version**: Support 3.12+
-- **Code Style**: Follow PEP 8 (enforced by Black)
-- **Type Hints**: Add type annotations to all new code
-- **Docstrings**: Use Google-style docstrings for public APIs
-- **Import Order**: Follow isort conventions (handled by Ruff)
+- **Go Version**: Support 1.25.0+
+- **Code Style**: Follow standard Go conventions (enforced by gofmt)
+- **Error Handling**: Always check and handle errors explicitly
+- **Documentation**: Use godoc-style comments for exported types and functions
+- **Import Grouping**: Standard library, then external packages, then internal packages
 
 ### Code Organization
 
-- **Modules**: Keep modules focused and cohesive
-- **Dependencies**: Add new dependencies judiciously
-- **Error Handling**: Use appropriate exceptions with clear messages
-- **Logging**: Use structured logging with appropriate levels
-- **Configuration**: Use Pydantic models for configuration
+- **Packages**: Keep packages focused and cohesive
+- **Dependencies**: Add new dependencies carefully
+- **Error Handling**: Return errors explicitly; use error wrapping with `fmt.Errorf` and `%w`
+- **Logging**: Use structured logging with zap (wrapped in slog interface)
+- **Configuration**: Use Viper for configuration management
 
 ### Example Code Structure
 
-```python
-"""Module for handling evaluation requests."""
+```go
+// Package handlers provides HTTP request handlers for evaluation operations.
+package handlers
 
-from typing import List, Optional
-from pydantic import BaseModel
-from structlog import get_logger
+import (
+	"encoding/json"
 
-logger = get_logger(__name__)
+	"github.com/your-org/eval-hub/internal/executioncontext"
+)
 
-class EvaluationRequest(BaseModel):
-    """Evaluation request model."""
+// EvaluationRequest represents an evaluation request.
+type EvaluationRequest struct {
+	Model          string   `json:"model"`
+	Benchmarks     []string `json:"benchmarks"`
+	ExperimentName string   `json:"experiment_name,omitempty"`
+}
 
-    model: str
-    benchmarks: List[str]
-    experiment_name: Optional[str] = None
+// HandleCreateEvaluation processes an evaluation request.
+// Returns evaluation results or an error.
+func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext, w http.ResponseWriter, r *http.Request) {
+	var req EvaluationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		ctx.Logger.Error("Failed to decode request", "error", err)
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
 
-async def process_evaluation(request: EvaluationRequest) -> dict:
-    """Process evaluation request.
-
-    Args:
-        request: The evaluation request to process
-
-    Returns:
-        Evaluation results dictionary
-
-    Raises:
-        ValidationError: If request is invalid
-        ExecutionError: If evaluation fails
-    """
-    logger.info("Processing evaluation", model=request.model)
-    # Implementation here
+	ctx.Logger.Info("Processing evaluation", "model", req.Model)
+	// Implementation here
+}
 ```
 
 ## Testing
 
 ### Test Categories
 
-- **Unit Tests**: Test individual functions and classes
+- **Unit Tests**: Test individual functions and packages (in `internal/`)
+- **FVT (Functional Verification Tests)**: BDD-style tests using godog (in `tests/features/`)
 - **Integration Tests**: Test component interactions
-- **API Tests**: Test HTTP endpoints end-to-end
 
 ### Running Tests
 
 ```bash
-# Run all tests
-pytest
+# Run all tests (unit + FVT)
+make test-all
 
-# Run with coverage
-pytest --cov=src/eval_hub
+# Run only unit tests
+make test
 
-# Run specific test categories
-pytest -m unit
-pytest -m integration
+# Run only FVT tests
+make test-fvt
 
-# Run tests for specific modules
-pytest tests/unit/services/
+# Run tests with coverage
+make test-coverage
+
+# Run specific unit test
+go test -v ./internal/handlers -run TestHandleName
+
+# Run specific FVT test
+go test -v ./tests/features -run TestFeatureName
 ```
 
 ### Test Requirements
@@ -268,26 +272,138 @@ pytest tests/unit/services/
 
 ### Test Structure
 
-```python
-import pytest
-from unittest.mock import AsyncMock, patch
-from eval_hub.services.executor import ExecutionService
+```go
+package handlers
 
-class TestExecutionService:
-    """Test cases for ExecutionService."""
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
 
-    @pytest.fixture
-    def service(self):
-        return ExecutionService()
+	"github.com/your-org/eval-hub/internal/executioncontext"
+)
 
-    async def test_execute_evaluation_success(self, service):
-        """Test successful evaluation execution."""
-        # Test implementation
+func TestHandleCreateEvaluation_Success(t *testing.T) {
+	// Arrange
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/evaluations/jobs", nil)
+	w := httptest.NewRecorder()
 
-    async def test_execute_evaluation_timeout(self, service):
-        """Test evaluation timeout handling."""
-        # Test implementation
+	// Act
+	handler.HandleCreateEvaluation(ctx, w, req)
+
+	// Assert
+	if w.Code != http.StatusOK {
+		t.Errorf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+}
+
+func TestHandleCreateEvaluation_Timeout(t *testing.T) {
+	// Test timeout handling
+}
 ```
+
+## OpenShift Deployment Testing
+
+EvalHub can be deployed on OpenShift via the [TrustyAI operator](https://github.com/trustyai-explainability/trustyai-service-operator), which is included in [OpenDataHub](https://opendatahub.io/).
+
+### Prerequisites
+
+- Access to an OpenShift cluster
+- Cluster admin permissions or sufficient RBAC permissions
+- A container registry account (e.g., quay.io) for hosting your custom EvalHub image
+
+### Deployment Steps
+
+1. **Install OpenDataHub from OperatorHub**
+
+   Install OpenDataHub 3.3 (recommended) from the OpenShift OperatorHub:
+   - Navigate to Operators → OperatorHub in the OpenShift console
+   - Search for "Open Data Hub"
+   - Install version 3.3 (or latest stable version)
+
+2. **Create a DataScienceCluster**
+
+   Create a DataScienceCluster with the TrustyAI component enabled (enabled by default):
+
+   ```yaml
+   apiVersion: datasciencecluster.opendatahub.io/v1
+   kind: DataScienceCluster
+   metadata:
+     name: default-dsc
+   spec:
+     components:
+       trustyai:
+         managementState: Managed
+   ```
+
+3. **Build and Push Your EvalHub Image**
+
+   Build your custom EvalHub image and push it to a container registry:
+
+   ```bash
+   # Build the image
+   podman build -t quay.io/<your-username>/eval-hub:latest .
+
+   # Push to registry
+   podman push quay.io/<your-username>/eval-hub:latest
+   ```
+
+4. **Update Manifests with Custom Image**
+
+   In your fork of the TrustyAI operator, update the `params.env` file in your manifests to reference your custom EvalHub image:
+
+   ```env
+   evalHubImage=quay.io/<your-username>/eval-hub:latest
+   ```
+
+5. **Configure Custom Image Reference**
+
+   You have two options to use your custom image:
+
+   **Option A: Using devFlags**
+
+   Update your DataScienceCluster to reference your custom manifests:
+
+   ```yaml
+   apiVersion: datasciencecluster.opendatahub.io/v1
+   kind: DataScienceCluster
+   metadata:
+     name: default-dsc
+   spec:
+     components:
+       trustyai:
+         devFlags:
+           manifests:
+             - contextDir: config
+               sourcePath: ""
+               uri: "https://github.com/<your-org>/trustyai-service-operator/tarball/<your-branch>"
+         managementState: Managed
+   ```
+
+   **Option B: Mount manifests directly**
+
+   Update the manifest files with your custom image reference and mount them to the operator. See the [OpenDataHub Component Development Guide](https://github.com/opendatahub-io/opendatahub-operator/blob/main/hack/component-dev/README.md) for details on mounting manifests.
+
+6. **Deploy an EvalHub Custom Resource**
+
+   Create an EvalHub CR to deploy your instance:
+
+   ```yaml
+   apiVersion: trustyai.opendatahub.io/v1alpha1
+   kind: EvalHub
+   metadata:
+     name: evalhub-instance
+     namespace: <your-namespace>
+   spec:
+     # Add your EvalHub configuration here
+   ```
+
+### Additional Resources
+
+For more detailed information on deployment and development workflows:
+- [TrustyAI Service Operator](https://github.com/trustyai-explainability/trustyai-service-operator)
+- [OpenDataHub Component Development Guide](https://github.com/opendatahub-io/opendatahub-operator/blob/main/hack/component-dev/README.md)
+- [OpenDataHub Documentation](https://opendatahub.io/)
 
 ## Pull Request Process
 
@@ -337,14 +453,14 @@ When creating a pull request, include:
 ### Review Process
 
 1. **Automated Checks**: CI must pass (tests, linting, type checking)
-2. **OWNERS Assignment**: Project maintainers automatically assigned as reviewers ([OWNERS Guide](.github/OWNERS.md))
+2. **OWNERS Assignment**: TBD - Project maintainers will be assigned as reviewers
 3. **Code Review**: Component experts and maintainer approval required
 4. **Testing**: Reviewers may test functionality manually
 5. **Documentation**: Ensure documentation is clear and complete
 
 ## Issue Reporting
 
-We use a structured labeling system with `kind/*` prefixes to categorize issues. See our [Label Guide](.github/LABELS.md) for the complete labeling scheme and setup instructions.
+We use a structured labeling system with `kind/*` prefixes to categorize issues.
 
 ### Bug Reports
 
@@ -362,7 +478,7 @@ When reporting bugs, include:
 
 **Environment**:
 - OS: [e.g. Ubuntu 22.04]
-- Python Version: [e.g. 3.12]
+- Go Version: [e.g. 1.25.0]
 - eval-hub Version: [e.g. 0.1.1]
 - Kubernetes Version: [e.g. 1.28]
 
@@ -404,12 +520,11 @@ For feature requests, include:
 ### Building Documentation
 
 ```bash
-# Generate OpenAPI documentation
-python -m eval_hub.main --generate-openapi
+# The OpenAPI specification is maintained in docs/openapi.yaml
+# Update the spec as you add or modify endpoints
 
-# Build documentation locally (if using docs framework)
-cd docs/
-make html
+# To view the API documentation locally, you can use any OpenAPI viewer
+# or serve it through the running service at /api/v1/openapi
 ```
 
 ## Community

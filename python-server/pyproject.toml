@@ -1,0 +1,65 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "eval-hub-server"
+version = "0.1.0a0"
+description = "Server binary for eval-hub"
+authors = [
+    {name = "Rui Vieira", email = "rui@redhat.com"},
+]
+readme = "README.md"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+keywords = ["eval-hub", "binary", "server"]
+
+[project.scripts]
+eval-hub-server = "evalhub_server.main:main"
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.14.14",
+]
+
+[project.urls]
+Homepage = "https://github.com/eval-hub/eval-hub"
+Repository = "https://github.com/eval-hub/eval-hub"
+"Bug Tracker" = "https://github.com/eval-hub/eval-hub/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["evalhub_server*"]
+
+[tool.setuptools.package-data]
+evalhub_server = ["binaries/*"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501",  # line too long, handled by black
+    "B008",  # do not perform function calls in argument defaults
+    "C901",  # too complex
+]

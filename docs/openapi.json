@@ -2,32 +2,54 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Eval Hub",
-    "description": "API REST server for evaluation backend orchestration on OpenShift",
-    "version": "0.1.0"
-  },
-  "paths": {
-    "/metrics": {
-      "get": {
-        "summary": "Metrics",
-        "description": "Prometheus metrics endpoint with MLflow health check.",
-        "operationId": "metrics_metrics_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          }
-        }
-      }
+    "description": "API REST server for evaluation backend orchestration",
+    "version": "0.0.1",
+    "contact": {
+      "name": "API Support"
     },
+    "license": {
+      "name": "Apache 2.0",
+      "url": "https://www.apache.org/licenses/LICENSE-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Local development server"
+    },
+    {
+      "url": "https://api.example.org",
+      "description": "Production server"
+    }
+  ],
+  "security": [],
+  "tags": [
+    {
+      "name": "Evaluations",
+      "description": "Evaluation job management endpoints"
+    },
+    {
+      "name": "Benchmarks",
+      "description": "Benchmark management endpoints"
+    },
+    {
+      "name": "Providers",
+      "description": "Evaluation provider endpoints"
+    },
+    {
+      "name": "Health",
+      "description": "Health check endpoints"
+    }
+  ],
+  "paths": {
     "/api/v1/health": {
       "get": {
         "summary": "Health Check",
         "description": "Health check endpoint.",
         "operationId": "health_check_api_v1_health_get",
+        "tags": [
+          "Health"
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -38,6 +60,18 @@
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         }
       }
@@ -55,7 +89,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SimpleEvaluationRequest"
+                "$ref": "#/components/schemas/EvaluationRequest"
               }
             }
           }
@@ -71,15 +105,17 @@
               }
             }
           },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         }
       },
@@ -123,30 +159,11 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
+              "type": "string",
               "description": "Filter by status",
               "title": "Status Filter"
             },
             "description": "Filter by status"
-          },
-          {
-            "name": "summary",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean",
-              "description": "If true, return summary view without detailed results",
-              "default": false,
-              "title": "Summary"
-            },
-            "description": "If true, return summary view without detailed results"
           }
         ],
         "responses": {
@@ -160,15 +177,17 @@
               }
             }
           },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         }
       }
@@ -188,7 +207,6 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Id"
             }
           }
@@ -204,15 +222,17 @@
               }
             }
           },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         }
       },
@@ -230,96 +250,36 @@
             "required": true,
             "schema": {
               "type": "string",
-              "format": "uuid",
               "title": "Id"
             }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
           },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/evaluations/jobs/{id}/summary": {
-      "get": {
-        "tags": [
-          "Evaluations"
-        ],
-        "summary": "Get Evaluation Summary",
-        "description": "Get a summary of an evaluation request.",
-        "operationId": "get_evaluation_summary_api_v1_evaluations_jobs__id__summary_get",
-        "parameters": [
           {
-            "name": "id",
-            "in": "path",
-            "required": true,
+            "name": "hard_delete",
+            "in": "query",
+            "required": false,
             "schema": {
-              "type": "string",
-              "format": "uuid",
-              "title": "Id"
+              "type": "boolean",
+              "description": "If `true`, delete the evaluation job permanently so that `GET /api/v1/evaluations/jobs/{id}` will return a 404.",
+              "default": false,
+              "title": "Hard Delete"
             }
           }
         ],
         "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "title": "Response Get Evaluation Summary Api V1 Evaluations Jobs  Id  Summary Get"
-                }
-              }
-            }
+          "204": {
+            "description": "Successful Response"
           },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/metrics/system": {
-      "get": {
-        "summary": "Get System Metrics",
-        "description": "Get system metrics and statistics.",
-        "operationId": "get_system_metrics_api_v1_metrics_system_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": true,
-                  "type": "object",
-                  "title": "Response Get System Metrics Api V1 Metrics System Get"
-                }
-              }
-            }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         }
       }
@@ -332,6 +292,31 @@
         "summary": "List Providers",
         "description": "List all registered evaluation providers.",
         "operationId": "list_providers_api_v1_evaluations_providers_get",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Filter by provider ID",
+              "title": "Provider Id"
+            },
+            "description": "Filter by provider ID"
+          },
+          {
+            "name": "benchmarks",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "description": "Set to false to not include benchmarks supported by this provider in the response",
+              "title": "Benchmarks"
+            },
+            "description": "Include or exclude benchmarks supported by this provider in the response"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -342,49 +327,18 @@
                 }
               }
             }
-          }
-        }
-      }
-    },
-    "/api/v1/evaluations/providers/{provider_id}": {
-      "get": {
-        "tags": [
-          "Providers"
-        ],
-        "summary": "Get Provider",
-        "description": "Get details of a specific provider.",
-        "operationId": "get_provider_api_v1_evaluations_providers__provider_id__get",
-        "parameters": [
-          {
-            "name": "provider_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Provider Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Provider"
-                }
-              }
-            }
           },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         }
       }
@@ -403,32 +357,29 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
+              "type": "string",
               "description": "Filter by provider ID",
               "title": "Provider Id"
             },
             "description": "Filter by provider ID"
           },
           {
+            "name": "id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "Filter by benchmark ID",
+              "title": "Benchmark Id"
+            },
+            "description": "Filter by benchmark ID"
+          },
+          {
             "name": "category",
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
+              "type": "string",
               "description": "Filter by benchmark category",
               "title": "Category"
             },
@@ -439,14 +390,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "null"
-                }
-              ],
+              "type": "string",
               "description": "Filter by tags (comma-separated)",
               "title": "Tags"
             },
@@ -464,261 +408,17 @@
               }
             }
           },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/evaluations/collections": {
-      "get": {
-        "tags": [
-          "Collections"
-        ],
-        "summary": "List Collections",
-        "description": "List all benchmark collections.",
-        "operationId": "list_collections_api_v1_evaluations_collections_get",
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ListCollectionsResponse"
-                }
-              }
-            }
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Collections"
-        ],
-        "summary": "Create Collection",
-        "description": "Create a new collection.",
-        "operationId": "create_collection_api_v1_evaluations_collections_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CollectionCreationRequest"
-              }
-            }
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
           },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Collection"
-                }
-              }
-            }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/v1/evaluations/collections/{collection_id}": {
-      "get": {
-        "tags": [
-          "Collections"
-        ],
-        "summary": "Get Collection",
-        "description": "Get details of a specific collection.",
-        "operationId": "get_collection_api_v1_evaluations_collections__collection_id__get",
-        "parameters": [
-          {
-            "name": "collection_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Collection Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Collection"
-                }
-              }
-            }
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
           },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "put": {
-        "tags": [
-          "Collections"
-        ],
-        "summary": "Update Collection",
-        "description": "Update an existing collection.",
-        "operationId": "update_collection_api_v1_evaluations_collections__collection_id__put",
-        "parameters": [
-          {
-            "name": "collection_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Collection Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CollectionUpdateRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Collection"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "patch": {
-        "tags": [
-          "Collections"
-        ],
-        "summary": "Patch Collection",
-        "description": "Partially update an existing collection.",
-        "operationId": "patch_collection_api_v1_evaluations_collections__collection_id__patch",
-        "parameters": [
-          {
-            "name": "collection_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Collection Id"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/CollectionUpdateRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Collection"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Collections"
-        ],
-        "summary": "Delete Collection",
-        "description": "Delete a collection.",
-        "operationId": "delete_collection_api_v1_evaluations_collections__collection_id__delete",
-        "parameters": [
-          {
-            "name": "collection_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Collection Id"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         }
       }
@@ -726,685 +426,6 @@
   },
   "components": {
     "schemas": {
-      "Benchmark": {
-        "properties": {
-          "benchmark_id": {
-            "type": "string",
-            "title": "Benchmark Id",
-            "description": "Unique benchmark identifier"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name",
-            "description": "Human-readable benchmark name"
-          },
-          "description": {
-            "type": "string",
-            "title": "Description",
-            "description": "Benchmark description"
-          },
-          "category": {
-            "type": "string",
-            "title": "Category",
-            "description": "Benchmark category"
-          },
-          "metrics": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Metrics",
-            "description": "List of metrics provided by this benchmark"
-          },
-          "num_few_shot": {
-            "type": "integer",
-            "title": "Num Few Shot",
-            "description": "Number of few-shot examples"
-          },
-          "dataset_size": {
-            "anyOf": [
-              {
-                "type": "integer"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Dataset Size",
-            "description": "Size of the evaluation dataset"
-          },
-          "tags": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Tags",
-            "description": "Tags for categorization"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "benchmark_id",
-          "name",
-          "description",
-          "category",
-          "metrics",
-          "num_few_shot"
-        ],
-        "title": "Benchmark",
-        "description": "Benchmark specification."
-      },
-      "BenchmarkConfig": {
-        "properties": {
-          "benchmark_id": {
-            "type": "string",
-            "title": "Benchmark Id",
-            "description": "Benchmark identifier"
-          },
-          "provider_id": {
-            "type": "string",
-            "title": "Provider Id",
-            "description": "Provider identifier"
-          },
-          "config": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Config",
-            "description": "Benchmark configuration including num_fewshot, limit, batch_size, etc."
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "benchmark_id",
-          "provider_id"
-        ],
-        "title": "BenchmarkConfig",
-        "description": "New simplified benchmark specification."
-      },
-      "BenchmarkReference": {
-        "properties": {
-          "provider_id": {
-            "type": "string",
-            "title": "Provider Id",
-            "description": "Provider identifier"
-          },
-          "benchmark_id": {
-            "type": "string",
-            "title": "Benchmark Id",
-            "description": "Benchmark identifier"
-          },
-          "weight": {
-            "type": "number",
-            "title": "Weight",
-            "description": "Weight for this benchmark in collection scoring",
-            "default": 1.0
-          },
-          "config": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Config",
-            "description": "Benchmark-specific configuration"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "provider_id",
-          "benchmark_id"
-        ],
-        "title": "BenchmarkReference",
-        "description": "Reference to a benchmark within a collection."
-      },
-      "BenchmarkResultPayload": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name",
-            "description": "Benchmark name"
-          },
-          "metrics": {
-            "additionalProperties": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "string"
-                }
-              ]
-            },
-            "type": "object",
-            "title": "Metrics",
-            "description": "Benchmark metrics"
-          },
-          "artifacts": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Artifacts",
-            "description": "Benchmark artifacts"
-          },
-          "mlflow_run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mlflow Run Id",
-            "description": "MLFlow run ID"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "title": "BenchmarkResultPayload",
-        "description": "Result payload for a single benchmark."
-      },
-      "Collection": {
-        "properties": {
-          "collection_id": {
-            "type": "string",
-            "title": "Collection Id",
-            "description": "Unique collection identifier"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name",
-            "description": "Human-readable collection name"
-          },
-          "description": {
-            "type": "string",
-            "title": "Description",
-            "description": "Collection description"
-          },
-          "provider_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Provider Id",
-            "description": "Primary provider for this collection"
-          },
-          "tags": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Tags",
-            "description": "Tags for categorizing the collection"
-          },
-          "metadata": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Metadata",
-            "description": "Additional collection metadata"
-          },
-          "benchmarks": {
-            "items": {
-              "$ref": "#/components/schemas/BenchmarkReference"
-            },
-            "type": "array",
-            "title": "Benchmarks",
-            "description": "List of benchmark references in this collection"
-          },
-          "created_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Created At",
-            "description": "Collection creation timestamp"
-          },
-          "updated_at": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Updated At",
-            "description": "Collection last update timestamp"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "collection_id",
-          "name",
-          "description",
-          "benchmarks"
-        ],
-        "title": "Collection",
-        "description": "Collection of benchmarks for specific evaluation scenarios."
-      },
-      "CollectionCreationRequest": {
-        "properties": {
-          "collection_id": {
-            "type": "string",
-            "title": "Collection Id",
-            "description": "Unique collection identifier"
-          },
-          "name": {
-            "type": "string",
-            "title": "Name",
-            "description": "Human-readable collection name"
-          },
-          "description": {
-            "type": "string",
-            "title": "Description",
-            "description": "Collection description"
-          },
-          "provider_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Provider Id",
-            "description": "Primary provider for this collection"
-          },
-          "tags": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Tags",
-            "description": "Tags for categorizing the collection"
-          },
-          "metadata": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Metadata",
-            "description": "Additional collection metadata"
-          },
-          "benchmarks": {
-            "items": {
-              "$ref": "#/components/schemas/BenchmarkReference"
-            },
-            "type": "array",
-            "title": "Benchmarks",
-            "description": "List of benchmark references in this collection"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "collection_id",
-          "name",
-          "description",
-          "benchmarks"
-        ],
-        "title": "CollectionCreationRequest",
-        "description": "Request for creating a new collection."
-      },
-      "CollectionUpdateRequest": {
-        "properties": {
-          "name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Name",
-            "description": "Human-readable collection name"
-          },
-          "description": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Description",
-            "description": "Collection description"
-          },
-          "provider_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Provider Id",
-            "description": "Primary provider for this collection"
-          },
-          "tags": {
-            "anyOf": [
-              {
-                "items": {
-                  "type": "string"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Tags",
-            "description": "Tags for categorizing the collection"
-          },
-          "metadata": {
-            "anyOf": [
-              {
-                "additionalProperties": true,
-                "type": "object"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Metadata",
-            "description": "Additional collection metadata"
-          },
-          "benchmarks": {
-            "anyOf": [
-              {
-                "items": {
-                  "$ref": "#/components/schemas/BenchmarkReference"
-                },
-                "type": "array"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Benchmarks",
-            "description": "List of benchmark references in this collection"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "title": "CollectionUpdateRequest",
-        "description": "Request for updating an existing collection."
-      },
-      "EvaluationResponse": {
-        "properties": {
-          "system": {
-            "$ref": "#/components/schemas/SystemInfo",
-            "description": "System metadata for the request"
-          },
-          "results": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/ResultsPayload"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Results payload available upon success"
-          },
-          "model": {
-            "$ref": "#/components/schemas/Model",
-            "description": "Model configuration provided by the user"
-          },
-          "benchmarks": {
-            "items": {
-              "$ref": "#/components/schemas/BenchmarkConfig"
-            },
-            "type": "array",
-            "title": "Benchmarks",
-            "description": "Benchmarks provided in the request"
-          },
-          "experiment": {
-            "$ref": "#/components/schemas/ExperimentConfig",
-            "description": "Experiment configuration provided by the user"
-          },
-          "timeout_minutes": {
-            "type": "integer",
-            "title": "Timeout Minutes",
-            "description": "Timeout for the entire evaluation (user-provided)"
-          },
-          "retry_attempts": {
-            "type": "integer",
-            "title": "Retry Attempts",
-            "description": "Number of retry attempts (user-provided)"
-          },
-          "callback_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Callback Url",
-            "description": "Callback URL provided by the user"
-          },
-          "async_mode": {
-            "type": "boolean",
-            "title": "Async Mode",
-            "description": "Whether the evaluation runs asynchronously"
-          },
-          "custom": {
-            "additionalProperties": true,
-            "type": "object",
-            "title": "Custom",
-            "description": "Custom fields supplied by the user in the request"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "system",
-          "model",
-          "benchmarks",
-          "experiment",
-          "timeout_minutes",
-          "retry_attempts",
-          "async_mode"
-        ],
-        "title": "EvaluationResponse",
-        "description": "Response payload for evaluation requests."
-      },
-      "EvaluationResult": {
-        "properties": {
-          "provider_id": {
-            "type": "string",
-            "title": "Provider Id",
-            "description": "Provider that ran the evaluation"
-          },
-          "benchmark_id": {
-            "type": "string",
-            "title": "Benchmark Id",
-            "description": "Benchmark identifier"
-          },
-          "benchmark_name": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Benchmark Name",
-            "description": "Benchmark display name"
-          },
-          "status": {
-            "$ref": "#/components/schemas/EvaluationStatus",
-            "description": "Evaluation status"
-          },
-          "metrics": {
-            "additionalProperties": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "string"
-                }
-              ]
-            },
-            "type": "object",
-            "title": "Metrics",
-            "description": "Evaluation metrics"
-          },
-          "artifacts": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Artifacts",
-            "description": "Paths to result artifacts"
-          },
-          "error_message": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Error Message",
-            "description": "Error message if failed"
-          },
-          "started_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Started At",
-            "description": "Start timestamp"
-          },
-          "completed_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At",
-            "description": "Completion timestamp"
-          },
-          "duration_seconds": {
-            "anyOf": [
-              {
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Duration Seconds",
-            "description": "Evaluation duration"
-          },
-          "mlflow_run_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mlflow Run Id",
-            "description": "MLFlow run ID"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "provider_id",
-          "benchmark_id",
-          "status"
-        ],
-        "title": "EvaluationResult",
-        "description": "Result of a single evaluation."
-      },
-      "EvaluationStatus": {
-        "type": "string",
-        "enum": [
-          "pending",
-          "running",
-          "completed",
-          "failed",
-          "cancelled"
-        ],
-        "title": "EvaluationStatus",
-        "description": "Status of an evaluation."
-      },
-      "ExperimentConfig": {
-        "properties": {
-          "name": {
-            "type": "string",
-            "title": "Name",
-            "description": "Experiment name for MLFlow tracking"
-          },
-          "tags": {
-            "additionalProperties": {
-              "type": "string"
-            },
-            "type": "object",
-            "title": "Tags",
-            "description": "Tags for the evaluation experiment"
-          }
-        },
-        "additionalProperties": false,
-        "type": "object",
-        "required": [
-          "name"
-        ],
-        "title": "ExperimentConfig",
-        "description": "Configuration for MLFlow experiment tracking."
-      },
-      "HTTPValidationError": {
-        "properties": {
-          "detail": {
-            "items": {
-              "$ref": "#/components/schemas/ValidationError"
-            },
-            "type": "array",
-            "title": "Detail"
-          }
-        },
-        "type": "object",
-        "title": "HTTPValidationError"
-      },
       "HealthResponse": {
         "properties": {
           "status": {
@@ -1412,137 +433,330 @@
             "title": "Status",
             "description": "Overall health status"
           },
-          "version": {
-            "type": "string",
-            "title": "Version",
-            "description": "Service version"
-          },
           "timestamp": {
             "type": "string",
             "format": "date-time",
             "title": "Timestamp",
             "description": "Health check timestamp"
-          },
-          "components": {
-            "additionalProperties": {
-              "additionalProperties": true,
-              "type": "object"
-            },
-            "type": "object",
-            "title": "Components",
-            "description": "Health status of individual components"
-          },
-          "uptime_seconds": {
-            "type": "number",
-            "title": "Uptime Seconds",
-            "description": "Service uptime in seconds"
-          },
-          "active_evaluations": {
-            "type": "integer",
-            "title": "Active Evaluations",
-            "description": "Number of active evaluations",
-            "default": 0
           }
         },
         "type": "object",
         "required": [
           "status",
-          "version",
-          "uptime_seconds"
+          "timestamp"
         ],
         "title": "HealthResponse",
         "description": "Health check response."
       },
-      "ListBenchmarksResponse": {
+      "APIError": {
+        "type": "object",
+        "description": "Error response for the API.",
         "properties": {
+          "message": {
+            "type": "string",
+            "description": "The error message.",
+            "title": "Message"
+          },
+          "message_code": {
+            "type": "string",
+            "description": "A message code for the error.",
+            "title": "Message Code"
+          },
+          "trace": {
+            "type": "string",
+            "description": "The trace id of the request.",
+            "title": "Trace"
+          }
+        },
+        "title": "API Error",
+        "required": [
+          "message",
+          "message_code",
+          "trace"
+        ]
+      },
+      "PaginationLink": {
+        "properties": {
+          "href": {
+            "type": "string",
+            "title": "Href",
+            "description": "Link URL"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "href"
+        ],
+        "title": "PaginationLink",
+        "description": "Hypermedia link used for pagination."
+      },
+      "ResourceInfo": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id",
+            "description": "Unique evaluation request ID"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Created At",
+            "description": "Creation timestamp"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Completed At",
+            "description": "Completion timestamp"
+          }
+        },
+        "required": [
+          "id",
+          "created_at"
+        ],
+        "title": "ResourceInfo",
+        "description": "Metadata about the evaluation resource."
+      },
+      "MLFlowExperimentId": {
+        "type": "string",
+        "description": "MLFlow experiment ID",
+        "title": "Mlflow Experiment Id"
+      },
+      "EvaluationResource": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/ResourceInfo"
+          },
+          {
+            "type": "object",
+            "properties": {
+              "mlflow_experiment_id": {
+                "$ref": "#/components/schemas/MLFlowExperimentId"
+              }
+            }
+          }
+        ],
+        "title": "EvaluationResource",
+        "description": "Resource information for an evaluation."
+      },
+      "ErrorMessage": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Details of the error.",
+            "title": "Message"
+          },
+          "message_code": {
+            "type": "string",
+            "description": "Code for the error",
+            "title": "Message Code"
+          }
+        },
+        "additionalProperties": true,
+        "required": [
+          "message",
+          "message_code"
+        ],
+        "title": "ErrorMessage",
+        "description": "Error message for a job."
+      },
+      "BenchmarkRunStatus": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Benchmark Id",
+            "description": "Benchmark id"
+          },
+          "provider_id": {
+            "type": "string",
+            "title": "Provider Id",
+            "description": "Provider id"
+          },
+          "status": {
+            "type": "string",
+            "title": "State",
+            "description": "Run state",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "started_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Started At",
+            "description": "Start timestamp"
+          },
+          "completed_at": {
+            "type": "string",
+            "format": "date-time",
+            "title": "Completed At",
+            "description": "Completion timestamp"
+          },
+          "error_message": {
+            "$ref": "#/components/schemas/ErrorMessage"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "provider_id",
+          "status",
+          "started_at"
+        ],
+        "title": "RunStatus",
+        "description": "Status information for an individual benchmark run."
+      },
+      "EvaluationJobStatus": {
+        "properties": {
+          "state": {
+            "type": "string",
+            "title": "State",
+            "description": "Overall state of the request",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "partially_failed",
+              "failed",
+              "cancelled"
+            ]
+          },
+          "message": {
+            "$ref": "#/components/schemas/ErrorMessage"
+          },
           "benchmarks": {
             "items": {
-              "additionalProperties": true,
-              "type": "object"
+              "$ref": "#/components/schemas/BenchmarkRunStatus"
+            },
+            "type": "array",
+            "title": "Benchmark run statuses",
+            "description": "Status for each benchmark run"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "title": "Status",
+        "description": "Overall status for an evaluation request."
+      },
+      "BenchmarkResult": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Benchmark Id",
+            "description": "Benchmark id"
+          },
+          "provider_id": {
+            "type": "string",
+            "title": "Provider Id",
+            "description": "Provider id"
+          },
+          "metrics": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "title": "Metrics",
+            "description": "Benchmark metrics"
+          },
+          "artifacts": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Artifacts",
+            "description": "Benchmark artifacts"
+          },
+          "mlflow_run_id": {
+            "type": "string",
+            "title": "Mlflow Run Id",
+            "description": "MLFlow run ID"
+          },
+          "logs_path": {
+            "type": "string",
+            "title": "Logs Path",
+            "description": "Optional path to run-specific logs"
+          }
+        },
+        "additionalProperties": true,
+        "type": "object",
+        "required": [
+          "id",
+          "provider_id"
+        ],
+        "title": "BenchmarkResult",
+        "description": "The result information for an individual benchmark run."
+      },
+      "EvaluationResults": {
+        "properties": {
+          "total_evaluations": {
+            "type": "integer",
+            "title": "Total Evaluations",
+            "description": "Total number of evaluations"
+          },
+          "completed_evaluations": {
+            "type": "integer",
+            "title": "Completed Evaluations",
+            "description": "Number of completed evaluations"
+          },
+          "failed_evaluations": {
+            "type": "integer",
+            "title": "Failed Evaluations",
+            "description": "Number of failed evaluations"
+          },
+          "benchmarks": {
+            "items": {
+              "$ref": "#/components/schemas/BenchmarkResult"
             },
             "type": "array",
             "title": "Benchmarks",
-            "description": "List of all available benchmarks"
+            "description": "List of benchmark results"
           },
-          "total_count": {
-            "type": "integer",
-            "title": "Total Count",
-            "description": "Total number of benchmarks"
-          },
-          "providers_included": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array",
-            "title": "Providers Included",
-            "description": "List of provider IDs included in the response"
+          "mlflow_experiment_url": {
+            "type": "string",
+            "title": "Mlflow Experiment Url",
+            "description": "Link to the MLFlow experiment"
           }
         },
         "additionalProperties": true,
         "type": "object",
-        "required": [
-          "benchmarks",
-          "total_count",
-          "providers_included"
-        ],
-        "title": "ListBenchmarksResponse",
-        "description": "Response for listing all benchmarks (similar to Llama Stack format)."
+        "title": "ResultsPayload",
+        "description": "Container for evaluation results."
       },
-      "ListCollectionsResponse": {
+      "EvaluationResponseResults": {
+        "type": "object",
         "properties": {
-          "collections": {
-            "items": {
-              "$ref": "#/components/schemas/Collection"
-            },
-            "type": "array",
-            "title": "Collections",
-            "description": "List of available collections"
+          "resource": {
+            "$ref": "#/components/schemas/EvaluationResource"
           },
-          "total_collections": {
-            "type": "integer",
-            "title": "Total Collections",
-            "description": "Total number of collections"
+          "status": {
+            "$ref": "#/components/schemas/EvaluationJobStatus",
+            "description": "Current status of the request"
+          },
+          "results": {
+            "$ref": "#/components/schemas/EvaluationResults"
           }
         },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "collections",
-          "total_collections"
-        ],
-        "title": "ListCollectionsResponse",
-        "description": "Response for listing all collections."
-      },
-      "ListProvidersResponse": {
-        "properties": {
-          "providers": {
-            "items": {
-              "$ref": "#/components/schemas/ProviderSummary"
-            },
-            "type": "array",
-            "title": "Providers",
-            "description": "List of available providers"
-          },
-          "total_providers": {
-            "type": "integer",
-            "title": "Total Providers",
-            "description": "Total number of providers"
-          },
-          "total_benchmarks": {
-            "type": "integer",
-            "title": "Total Benchmarks",
-            "description": "Total number of benchmarks across all providers"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "providers",
-          "total_providers",
-          "total_benchmarks"
-        ],
-        "title": "ListProvidersResponse",
-        "description": "Response for listing all providers."
+        "title": "EvaluationResponseResults",
+        "description": "Response payload for evaluation requests."
       },
       "Model": {
         "properties": {
@@ -1566,172 +780,83 @@
         "title": "Model",
         "description": "Model specification for evaluation requests."
       },
-      "PaginatedEvaluations": {
+      "BenchmarkConfig": {
         "properties": {
-          "first": {
-            "$ref": "#/components/schemas/PaginationLink",
-            "description": "Link to the first page"
-          },
-          "next": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PaginationLink"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "description": "Link to the next page, if available"
-          },
-          "limit": {
-            "type": "integer",
-            "title": "Limit",
-            "description": "Page size used for this response"
-          },
-          "total_count": {
-            "type": "integer",
-            "title": "Total Count",
-            "description": "Total number of evaluations"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/EvaluationResponse"
-            },
-            "type": "array",
-            "title": "Items",
-            "description": "Evaluations returned for this page"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "first",
-          "limit",
-          "total_count"
-        ],
-        "title": "PaginatedEvaluations",
-        "description": "Paginated list response for evaluation resources."
-      },
-      "PaginationLink": {
-        "properties": {
-          "href": {
+          "id": {
             "type": "string",
-            "title": "Href",
-            "description": "Link URL"
+            "title": "Benchmark Id",
+            "description": "Benchmark identifier"
+          },
+          "provider_id": {
+            "type": "string",
+            "title": "Provider Id",
+            "description": "Provider identifier"
+          },
+          "parameters": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Parameters",
+            "description": "Benchmark configuration including num_fewshot, limit, batch_size, etc."
           }
         },
-        "additionalProperties": true,
+        "additionalProperties": false,
         "type": "object",
         "required": [
-          "href"
+          "id",
+          "provider_id"
         ],
-        "title": "PaginationLink",
-        "description": "Hypermedia link used for pagination."
+        "title": "Benchmark Config",
+        "description": "New simplified benchmark specification."
       },
-      "Provider": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "ProviderSummary": {
-        "additionalProperties": true,
-        "type": "object"
-      },
-      "ProviderType": {
-        "type": "string",
-        "enum": [
-          "builtin",
-          "nemo-evaluator"
-        ],
-        "title": "ProviderType",
-        "description": "Type of evaluation provider."
-      },
-      "ResultsPayload": {
+      "ExperimentTag": {
+        "type": "object",
+        "description": "A tag for an experiment.",
         "properties": {
-          "benchmarks": {
-            "items": {
-              "$ref": "#/components/schemas/BenchmarkResultPayload"
-            },
-            "type": "array",
-            "title": "Benchmarks",
-            "description": "List of benchmark results"
+          "key": {
+            "type": "string",
+            "description": "The key of the tag.\nKeys can be up to 250 bytes in size.\n",
+            "title": "Key"
           },
-          "aggregated_metrics": {
-            "additionalProperties": {
-              "anyOf": [
-                {
-                  "type": "number"
-                },
-                {
-                  "type": "integer"
-                },
-                {
-                  "type": "string"
-                }
-              ]
-            },
-            "type": "object",
-            "title": "Aggregated Metrics",
-            "description": "Aggregated metrics across benchmarks"
-          },
-          "mlflow_experiment_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Mlflow Experiment Url",
-            "description": "Link to the MLFlow experiment"
+          "value": {
+            "type": "string",
+            "description": "The value of the tag.\nValues can be up to 5000 bytes in size.\n",
+            "title": "Value"
           }
         },
-        "additionalProperties": true,
-        "type": "object",
-        "title": "ResultsPayload",
-        "description": "Container for evaluation results."
+        "additionalProperties": false,
+        "title": "Experiment Tag"
       },
-      "RunStatus": {
+      "ExperimentConfig": {
+        "type": "object",
+        "description": "Configuration for MLFlow experiment tracking.",
         "properties": {
           "name": {
             "type": "string",
-            "title": "Name",
-            "description": "User-provided benchmark name"
+            "description": "Experiment name for MLFlow tracking.\nIf there is an `active` experiment with the same name, it will be reused. If there is no `active` experiment with the same name, a new experiment will be created.\n",
+            "title": "Name"
           },
-          "state": {
+          "tags": {
+            "type": "array",
+            "description": "Tags for the evaluation experiment.\n",
+            "items": {
+              "$ref": "#/components/schemas/ExperimentTag"
+            },
+            "maxItems": 20,
+            "title": "Tags"
+          },
+          "artifact_location": {
             "type": "string",
-            "title": "State",
-            "description": "Run state (pending, running, success, failed)"
-          },
-          "message": {
-            "type": "string",
-            "title": "Message",
-            "description": "Optional status message",
-            "default": ""
-          },
-          "logs_path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Logs Path",
-            "description": "Optional path to run-specific logs"
+            "description": "Artifact location is the directory where the evaluation artifacts will be stored. If not provided, the default artifact location will be used by the MLFlow server.\n",
+            "title": "Artifact Location"
           }
         },
-        "additionalProperties": true,
-        "type": "object",
         "required": [
-          "name",
-          "state"
+          "name"
         ],
-        "title": "RunStatus",
-        "description": "Status information for an individual benchmark run."
+        "additionalProperties": false,
+        "title": "Experiment Config"
       },
-      "SimpleEvaluationRequest": {
+      "EvaluationRequest": {
         "properties": {
           "model": {
             "$ref": "#/components/schemas/Model",
@@ -1761,30 +886,6 @@
             "description": "Number of retry attempts on failure",
             "default": 3
           },
-          "async_mode": {
-            "type": "boolean",
-            "title": "Async Mode",
-            "description": "Whether to run evaluations asynchronously",
-            "default": true
-          },
-          "callback_url": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Callback Url",
-            "description": "URL to call when evaluation completes"
-          },
-          "created_at": {
-            "type": "string",
-            "format": "date-time",
-            "title": "Created At",
-            "description": "Request creation timestamp"
-          },
           "custom": {
             "additionalProperties": true,
             "type": "object",
@@ -1792,132 +893,299 @@
             "description": "Custom fields for additional request data"
           }
         },
-        "additionalProperties": false,
         "type": "object",
         "required": [
           "model",
-          "benchmarks",
-          "experiment"
+          "benchmarks"
         ],
-        "title": "SimpleEvaluationRequest",
+        "title": "EvaluationRequest",
         "description": "Simplified evaluation request using the new schema."
       },
-      "SystemInfo": {
+      "EvaluationResponse": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/EvaluationResponseResults"
+          },
+          {
+            "$ref": "#/components/schemas/EvaluationRequest"
+          }
+        ],
+        "unevaluatedProperties": false,
+        "title": "EvaluationResponse",
+        "description": "Response payload for evaluation requests."
+      },
+      "PaginatedEvaluations": {
+        "properties": {
+          "first": {
+            "$ref": "#/components/schemas/PaginationLink",
+            "description": "Link to the first page"
+          },
+          "next": {
+            "$ref": "#/components/schemas/PaginationLink",
+            "description": "Link to the next page, if available"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit",
+            "description": "Page size used for this response"
+          },
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count",
+            "description": "Total number of evaluations"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/EvaluationResponse"
+            },
+            "type": "array",
+            "title": "Items",
+            "description": "Evaluations returned for this page"
+          }
+        },
+        "type": "object",
+        "required": [
+          "first",
+          "limit",
+          "total_count"
+        ],
+        "title": "PaginatedEvaluations",
+        "description": "Paginated list response for evaluation resources."
+      },
+      "BenchmarkDefinition": {
         "properties": {
           "id": {
             "type": "string",
-            "format": "uuid",
-            "title": "Id",
-            "description": "Unique evaluation request ID"
+            "title": "Benchmark Id",
+            "description": "Benchmark identifier"
           },
-          "status": {
-            "$ref": "#/components/schemas/SystemStatus",
-            "description": "Current status of the request"
-          },
-          "created_at": {
+          "name": {
             "type": "string",
-            "format": "date-time",
-            "title": "Created At",
-            "description": "Creation timestamp"
+            "title": "Name",
+            "description": "Benchmark name"
           },
-          "completed_at": {
-            "anyOf": [
-              {
-                "type": "string",
-                "format": "date-time"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Completed At",
-            "description": "Completion timestamp"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "id",
-          "status",
-          "created_at"
-        ],
-        "title": "SystemInfo",
-        "description": "Metadata about the evaluation resource."
-      },
-      "SystemStatus": {
-        "properties": {
-          "state": {
+          "description": {
             "type": "string",
-            "title": "State",
-            "description": "Overall state of the request"
+            "title": "Description",
+            "description": "Benchmark description"
           },
-          "message": {
+          "category": {
             "type": "string",
-            "title": "Message",
-            "description": "Optional status message",
-            "default": ""
+            "title": "Category",
+            "description": "Benchmark category"
           },
-          "logs_path": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Logs Path",
-            "description": "Optional path to system logs"
-          },
-          "runs": {
-            "items": {
-              "$ref": "#/components/schemas/RunStatus"
-            },
+          "metrics": {
             "type": "array",
-            "title": "Runs",
-            "description": "Status for each benchmark run"
-          }
-        },
-        "additionalProperties": true,
-        "type": "object",
-        "required": [
-          "state"
-        ],
-        "title": "SystemStatus",
-        "description": "Overall status for an evaluation request."
-      },
-      "ValidationError": {
-        "properties": {
-          "loc": {
             "items": {
-              "anyOf": [
-                {
-                  "type": "string"
-                },
-                {
-                  "type": "integer"
-                }
-              ]
+              "type": "string"
             },
-            "type": "array",
-            "title": "Location"
+            "title": "Metrics",
+            "description": "Benchmark metrics"
           },
-          "msg": {
+          "num_few_shot": {
+            "type": "integer",
+            "title": "Num Few Shot",
+            "description": "Number of few-shot examples"
+          },
+          "dataset_size": {
+            "type": "integer",
+            "title": "Dataset Size",
+            "description": "Size of the evaluation dataset"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "title": "Tags",
+            "description": "Benchmark tags"
+          }
+        }
+      },
+      "ProviderDefinition": {
+        "properties": {
+          "id": {
             "type": "string",
-            "title": "Message"
+            "title": "Provider Id",
+            "description": "Provider identifier"
+          },
+          "name": {
+            "type": "string",
+            "title": "Provider Name",
+            "description": "Provider display name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description",
+            "description": "Provider description"
           },
           "type": {
             "type": "string",
-            "title": "Error Type"
+            "title": "Provider Type",
+            "description": "Provider type"
+          },
+          "benchmarks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BenchmarkDefinition"
+            },
+            "title": "Benchmarks",
+            "description": "List of benchmarks supported by this provider"
+          }
+        }
+      },
+      "ListProvidersResponse": {
+        "properties": {
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count",
+            "description": "Total number of providers"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProviderDefinition"
+            },
+            "title": "Providers",
+            "description": "List of registered providers"
           }
         },
-        "type": "object",
         "required": [
-          "loc",
-          "msg",
-          "type"
+          "total_count"
         ],
-        "title": "ValidationError"
+        "title": "ListProvidersResponse",
+        "description": "Response for listing all providers"
+      },
+      "ListBenchmarksResponse": {
+        "properties": {
+          "total_count": {
+            "type": "integer",
+            "title": "Total Count",
+            "description": "Total number of benchmarks"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "allOf": [
+                {
+                  "properties": {
+                    "provider_id": {
+                      "type": "string",
+                      "title": "Provider Id",
+                      "description": "Provider identifier"
+                    }
+                  }
+                },
+                {
+                  "$ref": "#/components/schemas/BenchmarkDefinition"
+                }
+              ]
+            },
+            "title": "Benchmarks",
+            "description": "List of benchmarks"
+          }
+        },
+        "required": [
+          "total_count"
+        ],
+        "title": "ListBenchmarksResponse",
+        "description": "Response for listing all benchmarks (similar to Llama Stack format)."
+      }
+    },
+    "examples": {
+      "BadRequestError": {
+        "summary": "Bad request error with status code 400",
+        "value": {
+          "message": "The field 'state' is not valid.",
+          "message_code": "invalid_value",
+          "trace": "b12692e1-8582-4628-88ca-7a13fefb73e2"
+        }
+      },
+      "AuthenticationError": {
+        "summary": "Authentication error with status code 401",
+        "value": {
+          "message": "The bearer token is not valid.",
+          "message_code": "invalid_auth_token",
+          "trace": "b12692e1-8582-4628-88ca-7a13fefb73e2"
+        }
+      },
+      "AuthorizationError": {
+        "summary": "Authorization error with status code 403",
+        "value": {
+          "message": "The user does not have access to the endpoint.",
+          "message_code": "endpoint_access_forbidden",
+          "trace": "b12692e1-8582-4628-88ca-7a13fefb73e2"
+        }
+      },
+      "NotFoundError": {
+        "summary": "Not found error with status code 404",
+        "value": {
+          "message": "The resource was not found.",
+          "message_code": "not_found",
+          "trace": "b12692e1-8582-4628-88ca-7a13fefb73e2"
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Bad Request",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/APIError"
+            },
+            "examples": {
+              "BadRequestError": {
+                "$ref": "#/components/examples/BadRequestError"
+              }
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Unauthorized",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/APIError"
+            },
+            "examples": {
+              "AuthenticationError": {
+                "$ref": "#/components/examples/AuthenticationError"
+              }
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Forbidden",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/APIError"
+            },
+            "examples": {
+              "AuthorizationError": {
+                "$ref": "#/components/examples/AuthorizationError"
+              }
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Not Found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/APIError"
+            },
+            "examples": {
+              "NotFoundError": {
+                "$ref": "#/components/examples/NotFoundError"
+              }
+            }
+          }
+        }
       }
     }
   }

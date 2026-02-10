@@ -1,33 +1,46 @@
 package abstractions
 
 import (
+	"context"
+	"log/slog"
 	"time"
 
-	"github.com/eval-hub/eval-hub/internal/executioncontext"
 	"github.com/eval-hub/eval-hub/pkg/api"
 )
 
+type QueryResults[T any] struct {
+	Items       []T
+	TotalStored int
+}
+
 type Storage interface {
+	WithLogger(logger *slog.Logger) Storage
+	WithContext(ctx context.Context) Storage
+
 	// This is used to identify the storage implementation in the logs and error messages
 	GetDatasourceName() string
 
 	Ping(timeout time.Duration) error
 
 	// Evaluation job operations
-	CreateEvaluationJob(ctx *executioncontext.ExecutionContext, evaluation *api.EvaluationJobConfig) (*api.EvaluationJobResource, error)
-	GetEvaluationJob(ctx *executioncontext.ExecutionContext, id string) (*api.EvaluationJobResource, error)
-	GetEvaluationJobs(ctx *executioncontext.ExecutionContext, summary bool, limit int, offset int, statusFilter string) (*api.EvaluationJobResourceList, error)
-	DeleteEvaluationJob(ctx *executioncontext.ExecutionContext, id string, hardDelete bool) error
-	UpdateBenchmarkStatusForJob(ctx *executioncontext.ExecutionContext, id string, status api.BenchmarkStatus) error
-	UpdateEvaluationJobStatus(ctx *executioncontext.ExecutionContext, id string, state api.EvaluationJobState) error
+	CreateEvaluationJob(evaluation *api.EvaluationJobConfig, mlflowExperimentID string) (*api.EvaluationJobResource, error)
+	GetEvaluationJob(id string) (*api.EvaluationJobResource, error)
+	GetEvaluationJobs(limit int, offset int, statusFilter string) (*QueryResults[api.EvaluationJobResource], error)
+	DeleteEvaluationJob(id string, hardDelete bool) error
+	UpdateEvaluationJob(id string, runStatus *api.StatusEvent) error
+	// UpdateEvaluationJobStatus is used to update the status of an evaluation job and is internal - do we need it here?
+	UpdateEvaluationJobStatus(id string, state api.OverallState, message *api.MessageInfo) error
 
 	// Collection operations
-	CreateCollection(ctx *executioncontext.ExecutionContext, collection *api.CollectionResource) error
-	GetCollection(ctx *executioncontext.ExecutionContext, id string, summary bool) (*api.CollectionResource, error)
-	GetCollections(ctx *executioncontext.ExecutionContext, limit int, offset int) (*api.CollectionResourceList, error)
-	UpdateCollection(ctx *executioncontext.ExecutionContext, collection *api.CollectionResource) error
-	DeleteCollection(ctx *executioncontext.ExecutionContext, id string) error
+	CreateCollection(collection *api.CollectionResource) error
+	GetCollection(id string, summary bool) (*api.CollectionResource, error)
+	GetCollections(limit int, offset int) (*QueryResults[api.CollectionResource], error)
+	UpdateCollection(collection *api.CollectionResource) error
+	DeleteCollection(id string) error
 
 	// Close the storage connection
 	Close() error
 }
+
+// This interface must be decoupled from the service HTTP layer.
+// Do not pass ExecutionContext, Request or Response wrappers either.

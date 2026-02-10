@@ -9,7 +9,7 @@ type CollectionConfig struct {
 
 // CollectionResource represents collection resource
 type CollectionResource struct {
-	Resource
+	Resource Resource `json:"resource"`
 	CollectionConfig
 }
 
@@ -17,4 +17,9 @@ type CollectionResource struct {
 type CollectionResourceList struct {
 	Page
 	Items []CollectionResource `json:"items"`
+}
+
+type PublicCollectionResourceList struct {
+	TotalCount int                  `json:"total_count"`
+	Items      []CollectionResource `json:"items"`
 }

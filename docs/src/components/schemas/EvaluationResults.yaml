@@ -1,0 +1,27 @@
+properties:
+  total_evaluations:
+    type: integer
+    title: Total Evaluations
+    description: Total number of evaluations
+  completed_evaluations:
+    type: integer
+    title: Completed Evaluations
+    description: Number of completed evaluations
+  failed_evaluations:
+    type: integer
+    title: Failed Evaluations
+    description: Number of failed evaluations
+  benchmarks:
+    items:
+      $ref: ./BenchmarkResult.yaml
+    type: array
+    title: Benchmarks
+    description: List of benchmark results
+  mlflow_experiment_url:
+    type: string
+    title: Mlflow Experiment Url
+    description: Link to the MLFlow experiment
+additionalProperties: true
+type: object
+title: ResultsPayload
+description: Container for evaluation results.

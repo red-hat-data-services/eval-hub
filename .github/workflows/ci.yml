@@ -34,15 +34,9 @@ jobs:
     - name: Run vet
       run: make vet
 
-    - name: Run unit tests with coverage
+    - name: Run all tests (unit and integration) with coverage
       run: |
-        make test-all-coverage
-        # why are these here as we upload the .out files?
-        # go tool cover -func=bin/coverage.out -o=bin/coverage.txt
-        # go tool cover -func=bin/coverage-fvt.out -o=bin/coverage-fvt.txt
-
-    - name: Run FVT tests
-      run: make test-fvt
+        make clean test-all-coverage
 
     - name: Upload coverage reports to Codecov
       continue-on-error: ${{ github.actor == 'dependabot[bot]' }}  # Don't fail CI on Dependabot PRs since they can't access secrets
@@ -52,6 +46,11 @@ jobs:
         disable_search: true
         fail_ci_if_error: true
         token: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: Build and verify the API documentation
+      run: |
+        make documentation
+        git diff --stat --exit-code || (echo "API documentation is not generated. Run 'make documentation' locally." && exit 1)
 
   security-scan:
     name: Gosec Security Scanner

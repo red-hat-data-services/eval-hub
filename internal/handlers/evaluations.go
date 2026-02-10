@@ -1,12 +1,19 @@
 package handlers
 
 import (
-	"encoding/json"
-	"net/http"
-	"strings"
+	"fmt"
+	"runtime/debug"
+	"strconv"
 
+	"github.com/eval-hub/eval-hub/internal/abstractions"
+	"github.com/eval-hub/eval-hub/internal/constants"
 	"github.com/eval-hub/eval-hub/internal/executioncontext"
+	"github.com/eval-hub/eval-hub/internal/http_wrappers"
+	"github.com/eval-hub/eval-hub/internal/logging"
+	"github.com/eval-hub/eval-hub/internal/messages"
+	"github.com/eval-hub/eval-hub/internal/mlflow"
 	"github.com/eval-hub/eval-hub/internal/serialization"
+	"github.com/eval-hub/eval-hub/internal/serviceerrors"
 	"github.com/eval-hub/eval-hub/pkg/api"
 )
 
@@ -23,212 +30,211 @@ type BenchmarkSpec struct {
 	Config      map[string]interface{} `json:"config,omitempty"`
 }
 
-// HandleCreateEvaluation handles POST /api/v1/evaluations/jobs
-func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodPost, w) {
-		return
+func getParam[T string | int | bool](r http_wrappers.RequestWrapper, name string, optional bool, defaultValue T) (T, error) {
+	values := r.Query(name)
+	if (len(values) == 0) || (values[0] == "") {
+		if !optional {
+			return defaultValue, serviceerrors.NewServiceError(messages.QueryParameterRequired, "ParameterName", name)
+		}
+		return defaultValue, nil
 	}
+	switch any(defaultValue).(type) {
+	case string:
+		return any(values[0]).(T), nil
+	case int:
+		v, err := strconv.Atoi(values[0])
+		if err != nil {
+			return defaultValue, serviceerrors.NewServiceError(messages.QueryParameterInvalid, "ParameterName", name, "Type", "integer", "Value", values[0])
+		}
+		return any(v).(T), nil
+	case bool:
+		v, err := strconv.ParseBool(values[0])
+		if err != nil {
+			return defaultValue, serviceerrors.NewServiceError(messages.QueryParameterInvalid, "ParameterName", name, "Type", "boolean", "Value", values[0])
+		}
+		return any(v).(T), nil
+	default:
+		// should never get here
+		return any(fmt.Sprintf("%v", values[0])).(T), nil
+	}
+}
+
+// HandleCreateEvaluation handles POST /api/v1/evaluations/jobs
+func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext, req http_wrappers.RequestWrapper, w http_wrappers.ResponseWrapper) {
+	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx)
+
+	logging.LogRequestStarted(ctx)
+
 	// get the body bytes from the context
-	bodyBytes, err := ctx.GetBodyAsBytes()
+	bodyBytes, err := req.BodyAsBytes()
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		w.Error(err, ctx.RequestID)
 		return
 	}
 	evaluation := &api.EvaluationJobConfig{}
 	err = serialization.Unmarshal(h.validate, ctx, bodyBytes, evaluation)
 	if err != nil {
-		h.serializationError(ctx, w, err, http.StatusBadRequest)
+		w.Error(err, ctx.RequestID)
 		return
 	}
 
-	response, err := h.storage.CreateEvaluationJob(ctx, evaluation)
+	mlflowExperimentID, err := mlflow.GetExperimentID(ctx, h.mlflowClient, evaluation.Experiment)
 	if err != nil {
-		h.errorResponse(ctx, w, err.Error(), http.StatusInternalServerError)
+		w.Error(err, ctx.RequestID)
 		return
 	}
 
-	h.successResponse(ctx, w, response, http.StatusAccepted)
+	response, err := storage.CreateEvaluationJob(evaluation, mlflowExperimentID)
+	if err != nil {
+		w.Error(err, ctx.RequestID)
+		return
+	}
+
+	if h.runtime != nil {
+		job := response
+		runErr := executeEvaluationJob(ctx, h.runtime, job, &storage)
+		if runErr != nil {
+			ctx.Logger.Error("RunEvaluationJob failed", "error", runErr, "job_id", job.Resource.ID)
+			state := api.OverallStateFailed
+			message := &api.MessageInfo{
+				Message:     runErr.Error(),
+				MessageCode: constants.MESSAGE_CODE_EVALUATION_JOB_FAILED,
+			}
+			if err := storage.UpdateEvaluationJobStatus(job.Resource.ID, state, message); err != nil {
+				ctx.Logger.Error("failed to update evaluation status", "error", err, "job_id", job.Resource.ID)
+			}
+			w.Error(runErr, ctx.RequestID)
+			return
+		}
+	}
+
+	w.WriteJSON(response, 202)
+}
+
+func executeEvaluationJob(ctx *executioncontext.ExecutionContext, runtime abstractions.Runtime, job *api.EvaluationJobResource, storage *abstractions.Storage) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			ctx.Logger.Error("panic in RunEvaluationJob", "panic", recovered, "stack", string(debug.Stack()), "job_id", job.Resource.ID)
+			err = serviceerrors.NewServiceError(messages.InternalServerError, "Error", fmt.Sprint(recovered))
+		}
+	}()
+	return runtime.WithLogger(ctx.Logger).WithContext(ctx.Ctx).RunEvaluationJob(job, storage)
 }
 
 // HandleListEvaluations handles GET /api/v1/evaluations/jobs
-func (h *Handlers) HandleListEvaluations(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodGet, w) {
+func (h *Handlers) HandleListEvaluations(ctx *executioncontext.ExecutionContext, r http_wrappers.RequestWrapper, w http_wrappers.ResponseWrapper) {
+	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx)
+
+	logging.LogRequestStarted(ctx)
+
+	limit, err := getParam(r, "limit", true, 50)
+	if err != nil {
+		w.Error(err, ctx.RequestID)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"items":       []interface{}{},
-		"total_count": 0,
-		"limit":       50,
-		"first":       map[string]string{"href": ""},
-		"next":        nil,
-	})
+	offset, err := getParam(r, "offset", true, 0)
+	if err != nil {
+		w.Error(err, ctx.RequestID)
+		return
+	}
+	statusFilter, err := getParam(r, "status_filter", true, "")
+	if err != nil {
+		w.Error(err, ctx.RequestID)
+		return
+	}
+	res, err := storage.GetEvaluationJobs(limit, offset, statusFilter)
+	if err != nil {
+		w.Error(err, ctx.RequestID)
+		return
+	}
+	page, err := CreatePage(res.TotalStored, offset, limit, ctx, r)
+	if err != nil {
+		w.Error(err, ctx.RequestID)
+		return
+	}
+	w.WriteJSON(api.EvaluationJobResourceList{
+		Page:  *page,
+		Items: res.Items,
+	}, 200)
 }
 
 // HandleGetEvaluation handles GET /api/v1/evaluations/jobs/{id}
-func (h *Handlers) HandleGetEvaluation(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodGet, w) {
+func (h *Handlers) HandleGetEvaluation(ctx *executioncontext.ExecutionContext, r http_wrappers.RequestWrapper, w http_wrappers.ResponseWrapper) {
+	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx)
+	logging.LogRequestStarted(ctx)
+
+	// Extract ID from path
+	evaluationJobID := r.PathValue(constants.PATH_PARAMETER_JOB_ID)
+	if evaluationJobID == "" {
+		w.Error(serviceerrors.NewServiceError(messages.MissingPathParameter, "ParameterName", constants.PATH_PARAMETER_JOB_ID), ctx.RequestID)
 		return
 	}
 
-	// Extract ID from path
-	pathParts := strings.Split(ctx.URI, "/")
-	id := pathParts[len(pathParts)-1]
+	response, err := storage.GetEvaluationJob(evaluationJobID)
+	if err != nil {
+		w.Error(err, ctx.RequestID)
+		return
+	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message": "Evaluation retrieval not yet implemented",
-		"id":      id,
-	})
+	w.WriteJSON(response, 200)
+}
+
+func (h *Handlers) HandleUpdateEvaluation(ctx *executioncontext.ExecutionContext, r http_wrappers.RequestWrapper, w http_wrappers.ResponseWrapper) {
+	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx)
+	logging.LogRequestStarted(ctx)
+
+	// Extract ID from path
+	evaluationJobID := r.PathValue(constants.PATH_PARAMETER_JOB_ID)
+	if evaluationJobID == "" {
+		w.Error(serviceerrors.NewServiceError(messages.MissingPathParameter, "ParameterName", constants.PATH_PARAMETER_JOB_ID), ctx.RequestID)
+		return
+	}
+
+	// get the body bytes from the context
+	bodyBytes, err := r.BodyAsBytes()
+	if err != nil {
+		w.Error(err, ctx.RequestID)
+		return
+	}
+	status := &api.StatusEvent{}
+	err = serialization.Unmarshal(h.validate, ctx, bodyBytes, status)
+	if err != nil {
+		w.Error(err, ctx.RequestID)
+		return
+	}
+
+	err = storage.UpdateEvaluationJob(evaluationJobID, status)
+	if err != nil {
+		w.Error(err, ctx.RequestID)
+		return
+	}
+
+	w.WriteJSON(nil, 204)
 }
 
 // HandleCancelEvaluation handles DELETE /api/v1/evaluations/jobs/{id}
-func (h *Handlers) HandleCancelEvaluation(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodDelete, w) {
+func (h *Handlers) HandleCancelEvaluation(ctx *executioncontext.ExecutionContext, r http_wrappers.RequestWrapper, w http_wrappers.ResponseWrapper) {
+	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx)
+	logging.LogRequestStarted(ctx)
+
+	// Extract ID from path
+	evaluationJobID := r.PathValue(constants.PATH_PARAMETER_JOB_ID)
+	if evaluationJobID == "" {
+		w.Error(serviceerrors.NewServiceError(messages.MissingPathParameter, "ParameterName", constants.PATH_PARAMETER_JOB_ID), ctx.RequestID)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message": "Evaluation cancellation not yet implemented",
-	})
-}
-
-// HandleGetEvaluationSummary handles GET /api/v1/evaluations/jobs/{id}/summary
-func (h *Handlers) HandleGetEvaluationSummary(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodGet, w) {
+	hardDelete, err := getParam(r, "hard_delete", true, false)
+	if err != nil {
+		w.Error(err, ctx.RequestID)
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message": "Evaluation summary not yet implemented",
-	})
-}
-
-// HandleListBenchmarks handles GET /api/v1/evaluations/benchmarks
-func (h *Handlers) HandleListBenchmarks(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodGet, w) {
+	err = storage.DeleteEvaluationJob(evaluationJobID, hardDelete)
+	if err != nil {
+		ctx.Logger.Info("Failed to delete evaluation job", "error", err.Error(), "id", evaluationJobID, "hardDelete", hardDelete)
+		w.Error(err, ctx.RequestID)
 		return
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"benchmarks":         []interface{}{},
-		"total_count":        0,
-		"providers_included": []string{},
-	})
-}
-
-// HandleListCollections handles GET /api/v1/evaluations/collections
-func (h *Handlers) HandleListCollections(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodGet, w) {
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"collections":       []interface{}{},
-		"total_collections": 0,
-	})
-}
-
-// HandleCreateCollection handles POST /api/v1/evaluations/collections
-func (h *Handlers) HandleCreateCollection(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodPost, w) {
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message": "Collection creation not yet implemented",
-	})
-}
-
-// HandleGetCollection handles GET /api/v1/evaluations/collections/{collection_id}
-func (h *Handlers) HandleGetCollection(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodGet, w) {
-		return
-	}
-
-	// Extract collection_id from path
-	pathParts := strings.Split(ctx.URI, "/")
-	collectionID := pathParts[len(pathParts)-1]
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":       "Collection retrieval not yet implemented",
-		"collection_id": collectionID,
-	})
-}
-
-// HandleUpdateCollection handles PUT /api/v1/evaluations/collections/{collection_id}
-func (h *Handlers) HandleUpdateCollection(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodPut, w) {
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message": "Collection update not yet implemented",
-	})
-}
-
-// HandlePatchCollection handles PATCH /api/v1/evaluations/collections/{collection_id}
-func (h *Handlers) HandlePatchCollection(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodPatch, w) {
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message": "Collection patch not yet implemented",
-	})
-}
-
-// HandleDeleteCollection handles DELETE /api/v1/evaluations/collections/{collection_id}
-func (h *Handlers) HandleDeleteCollection(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodDelete, w) {
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message": "Collection deletion not yet implemented",
-	})
-}
-
-// HandleListProviders handles GET /api/v1/evaluations/providers
-func (h *Handlers) HandleListProviders(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodGet, w) {
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"providers":        []interface{}{},
-		"total_providers":  0,
-		"total_benchmarks": 0,
-	})
-}
-
-// HandleGetProvider handles GET /api/v1/evaluations/providers/{provider_id}
-func (h *Handlers) HandleGetProvider(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodGet, w) {
-		return
-	}
-
-	// Extract provider_id from path
-	pathParts := strings.Split(ctx.URI, "/")
-	providerID := pathParts[len(pathParts)-1]
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"message":     "Provider retrieval not yet implemented",
-		"provider_id": providerID,
-	})
+	w.WriteJSON(nil, 204)
 }
