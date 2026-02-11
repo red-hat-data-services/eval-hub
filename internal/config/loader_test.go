@@ -24,6 +24,9 @@ func TestLoadConfig(t *testing.T) {
 
 	t.Run("setting environment variables", func(t *testing.T) {
 		os.Setenv("MLFLOW_TRACKING_URI", "http://localhost:9999")
+		t.Cleanup(func() {
+			os.Unsetenv("MLFLOW_TRACKING_URI")
+		})
 		serviceConfig, err := config.LoadConfig(logger, "0.0.1", "local", time.Now().Format(time.RFC3339), "../../tests")
 		if err != nil {
 			t.Fatalf("Failed to load config: %v", err)
