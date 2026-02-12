@@ -8,7 +8,6 @@ import (
 )
 
 func TestBuildJobConfigDefaults(t *testing.T) {
-	retry := 2
 	serviceURL := "http://eval-hub"
 	t.Setenv(serviceURLEnv, serviceURL)
 	evaluation := &api.EvaluationJobResource{
@@ -21,7 +20,6 @@ func TestBuildJobConfigDefaults(t *testing.T) {
 				URL:  "http://model",
 				Name: "model",
 			},
-			RetryAttempts: &retry,
 			Benchmarks: []api.BenchmarkConfig{
 				{
 					Ref: api.Ref{ID: "bench-1"},
@@ -52,9 +50,6 @@ func TestBuildJobConfigDefaults(t *testing.T) {
 	}
 	if cfg.adapterImage != "adapter:latest" {
 		t.Fatalf("expected adapter image to be set")
-	}
-	if cfg.retryAttempts != retry {
-		t.Fatalf("expected retry attempts %d, got %d", retry, cfg.retryAttempts)
 	}
 	if cfg.namespace == "" {
 		t.Fatalf("expected namespace to be set")
@@ -101,6 +96,55 @@ func TestBuildJobConfigDefaults(t *testing.T) {
 	}
 	if callback, ok := decoded["callback_url"].(string); !ok || callback != serviceURL {
 		t.Fatalf("expected job spec json callback_url to be %q, got %v", serviceURL, decoded["callback_url"])
+	}
+}
+
+func TestBuildJobConfigAllowsNumExamplesOnly(t *testing.T) {
+	t.Setenv(serviceURLEnv, "http://eval-hub")
+	evaluation := &api.EvaluationJobResource{
+		Resource: api.EvaluationResource{
+			Resource:           api.Resource{ID: "job-456"},
+			MLFlowExperimentID: "",
+		},
+		EvaluationJobConfig: api.EvaluationJobConfig{
+			Model: api.ModelRef{
+				URL:  "http://model",
+				Name: "model",
+			},
+			Benchmarks: []api.BenchmarkConfig{
+				{
+					Ref:        api.Ref{ID: "bench-1"},
+					Parameters: map[string]any{"num_examples": 10},
+				},
+			},
+		},
+	}
+	provider := &api.ProviderResource{
+		ID: "provider-1",
+		Runtime: &api.Runtime{
+			K8s: &api.K8sRuntime{
+				Image: "adapter:latest",
+			},
+		},
+	}
+
+	cfg, err := buildJobConfig(evaluation, provider, "bench-1")
+	if err != nil {
+		t.Fatalf("expected no error for num_examples-only benchmark_config, got %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(cfg.jobSpecJSON), &decoded); err != nil {
+		t.Fatalf("unmarshal job spec json: %v", err)
+	}
+	if numExamples, ok := decoded["num_examples"].(float64); !ok || int(numExamples) != 10 {
+		t.Fatalf("expected job spec json num_examples to be %d, got %v", 10, decoded["num_examples"])
+	}
+	benchmarkConfig, ok := decoded["benchmark_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected benchmark_config to be a map, got %T", decoded["benchmark_config"])
+	}
+	if len(benchmarkConfig) != 0 {
+		t.Fatalf("expected empty benchmark_config, got %v", benchmarkConfig)
 	}
 }
 
@@ -187,7 +231,7 @@ func TestBuildJobConfigMissingServiceURL(t *testing.T) {
 	}
 }
 
-func TestBuildJobConfigMissingBenchmarkConfig(t *testing.T) {
+func TestBuildJobConfigAllowsEmptyBenchmarkConfig(t *testing.T) {
 	t.Setenv(serviceURLEnv, "http://eval-hub")
 	evaluation := &api.EvaluationJobResource{
 		Resource: api.EvaluationResource{
@@ -215,9 +259,20 @@ func TestBuildJobConfigMissingBenchmarkConfig(t *testing.T) {
 		},
 	}
 
-	_, err := buildJobConfig(evaluation, provider, "bench-1")
-	if err == nil {
-		t.Fatalf("expected error for missing benchmark_config")
+	cfg, err := buildJobConfig(evaluation, provider, "bench-1")
+	if err != nil {
+		t.Fatalf("expected no error for empty benchmark_config, got %v", err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(cfg.jobSpecJSON), &decoded); err != nil {
+		t.Fatalf("unmarshal job spec json: %v", err)
+	}
+	benchmarkConfig, ok := decoded["benchmark_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected benchmark_config to be a map, got %T", decoded["benchmark_config"])
+	}
+	if len(benchmarkConfig) != 0 {
+		t.Fatalf("expected empty benchmark_config, got %v", benchmarkConfig)
 	}
 }
 
@@ -260,20 +315,6 @@ func TestCopyParamsCreatesCopy(t *testing.T) {
 	copied["temp"] = 0.3
 	if original["temp"] == copied["temp"] {
 		t.Fatalf("expected copy to be independent of original")
-	}
-}
-
-func TestTimeoutSecondsFromMinutes(t *testing.T) {
-	if timeoutSecondsFromMinutes(nil) != nil {
-		t.Fatalf("expected nil for nil minutes")
-	}
-	minutes := 2
-	seconds := timeoutSecondsFromMinutes(&minutes)
-	if seconds == nil || *seconds != 120 {
-		if seconds == nil {
-			t.Fatalf("expected 120, got nil")
-		}
-		t.Fatalf("expected 120, got %d", *seconds)
 	}
 }
 

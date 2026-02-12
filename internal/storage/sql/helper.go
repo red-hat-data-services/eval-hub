@@ -72,6 +72,22 @@ func createGetEntityStatement(driver, tableName string) (string, error) {
 	}
 }
 
+// createCheckEntityExistsStatement returns a driver-specific SELECT statement
+// to check if an entity exists by ID and retrieve its status
+func createCheckEntityExistsStatement(driver, tableName string) (string, error) {
+	quotedTable := quoteIdentifier(driver, tableName)
+
+	switch driver {
+	case POSTGRES_DRIVER:
+		return fmt.Sprintf(`SELECT id, status FROM %s WHERE id = $1;`, quotedTable), nil
+	case SQLITE_DRIVER:
+		// SQLite: use ? placeholder
+		return fmt.Sprintf(`SELECT id, status FROM %s WHERE id = ?;`, quotedTable), nil
+	default:
+		return "", getUnsupportedDriverError(driver)
+	}
+}
+
 // createDeleteEntityStatement returns a driver-specific DELETE statement
 // to delete an entity by ID
 func createDeleteEntityStatement(driver, tableName string) (string, error) {

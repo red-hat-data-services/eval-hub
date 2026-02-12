@@ -39,10 +39,9 @@ func (f *fakeStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent)
 	return f.updateErr
 }
 
-func (f *fakeStorage) GetDatasourceName() string  { return "fake" }
 func (f *fakeStorage) Ping(_ time.Duration) error { return nil }
-func (f *fakeStorage) CreateEvaluationJob(_ *api.EvaluationJobConfig, _ string) (*api.EvaluationJobResource, error) {
-	return nil, nil
+func (f *fakeStorage) CreateEvaluationJob(_ *api.EvaluationJobResource) error {
+	return nil
 }
 func (f *fakeStorage) GetEvaluationJob(_ string) (*api.EvaluationJobResource, error) {
 	return nil, nil
@@ -50,7 +49,7 @@ func (f *fakeStorage) GetEvaluationJob(_ string) (*api.EvaluationJobResource, er
 func (f *fakeStorage) GetEvaluationJobs(int, _ int, _ string) (*abstractions.QueryResults[api.EvaluationJobResource], error) {
 	return nil, nil
 }
-func (f *fakeStorage) DeleteEvaluationJob(_ string, _ bool) error {
+func (f *fakeStorage) DeleteEvaluationJob(_ string) error {
 	return nil
 }
 func (f *fakeStorage) UpdateEvaluationJobStatus(_ string, _ api.OverallState, _ *api.MessageInfo) error {
@@ -82,6 +81,7 @@ func (f *fakeStorage) WithLogger(logger *slog.Logger) abstractions.Storage {
 		updateErr:     f.updateErr,
 	}
 }
+
 func (f *fakeStorage) WithContext(ctx context.Context) abstractions.Storage {
 	return &fakeStorage{
 		logger:        f.logger,

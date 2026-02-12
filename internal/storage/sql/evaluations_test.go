@@ -3,10 +3,13 @@ package sql_test
 import (
 	"encoding/json"
 	"maps"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/eval-hub/eval-hub/internal/abstractions"
+	"github.com/eval-hub/eval-hub/internal/common"
+	"github.com/eval-hub/eval-hub/internal/constants"
 	"github.com/eval-hub/eval-hub/internal/logging"
 	"github.com/eval-hub/eval-hub/internal/storage"
 	"github.com/eval-hub/eval-hub/pkg/api"
@@ -48,7 +51,16 @@ func TestUpdateEvaluationJob_PreservesProviderID(t *testing.T) {
 		},
 	}
 
-	job, err := store.CreateEvaluationJob(config, "")
+	job := &api.EvaluationJobResource{
+		Resource: api.EvaluationResource{
+			Resource: api.Resource{
+				ID: "job-1",
+			},
+		},
+		EvaluationJobConfig: *config,
+	}
+
+	err = store.CreateEvaluationJob(job)
 	if err != nil {
 		t.Fatalf("Failed to create job: %v", err)
 	}
@@ -152,7 +164,7 @@ func TestEvaluationsStorage(t *testing.T) {
 	})
 
 	t.Run("CreateEvaluationJob creates a new evaluation job", func(t *testing.T) {
-		job := &api.EvaluationJobConfig{
+		config := &api.EvaluationJobConfig{
 			Model: api.ModelRef{
 				URL:  "http://test.com",
 				Name: "test",
@@ -164,13 +176,25 @@ func TestEvaluationsStorage(t *testing.T) {
 				},
 			},
 		}
-		resp, err := store.CreateEvaluationJob(job, "")
+		job := &api.EvaluationJobResource{
+			Resource: api.EvaluationResource{
+				Resource: api.Resource{
+					ID: common.GUID(),
+				},
+			},
+			EvaluationJobConfig: *config,
+		}
+
+		err := store.CreateEvaluationJob(job)
 		if err != nil {
 			t.Fatalf("Failed to create evaluation job: %v", err)
 		}
-		evaluationId = resp.Resource.ID
+		evaluationId = job.Resource.ID
 		if evaluationId == "" {
 			t.Fatalf("Evaluation ID is empty")
+		}
+		if job.EvaluationJobConfig.Collection != nil {
+			t.Fatalf("Collection is not nil")
 		}
 	})
 
@@ -256,7 +280,17 @@ func TestEvaluationsStorage(t *testing.T) {
 	})
 
 	t.Run("DeleteEvaluationJob deletes the evaluation job", func(t *testing.T) {
-		err := store.DeleteEvaluationJob(evaluationId, false)
+		err := store.UpdateEvaluationJobStatus(evaluationId, api.OverallStateCancelled, &api.MessageInfo{
+			Message:     "Evaluation job cancelled",
+			MessageCode: constants.MESSAGE_CODE_EVALUATION_JOB_CANCELLED,
+		})
+		if err == nil {
+			t.Fatalf("Failed to get error when cancelling a deleted evaluation job")
+		}
+		if !strings.Contains(err.Error(), "can not be cancelled because") {
+			t.Fatalf("Failed to get correct error when cancelling a deleted evaluation job: %v", err)
+		}
+		err = store.DeleteEvaluationJob(evaluationId)
 		if err != nil {
 			t.Fatalf("Failed to delete evaluation job: %v", err)
 		}

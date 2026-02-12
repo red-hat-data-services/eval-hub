@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eval-hub/eval-hub/internal/abstractions"
+	"github.com/eval-hub/eval-hub/internal/constants"
 	"github.com/eval-hub/eval-hub/internal/executioncontext"
 	"github.com/eval-hub/eval-hub/internal/handlers"
 	"github.com/eval-hub/eval-hub/pkg/api"
@@ -33,42 +34,33 @@ type fakeStorage struct {
 	abstractions.Storage
 	lastStatusID string
 	lastStatus   api.OverallState
+	job          *api.EvaluationJobResource
+	deleteID     string
 }
 
 func (f *fakeStorage) WithLogger(_ *slog.Logger) abstractions.Storage { return f }
 func (f *fakeStorage) WithContext(_ context.Context) abstractions.Storage {
 	return f
 }
-func (f *fakeStorage) GetDatasourceName() string  { return "fake" }
-func (f *fakeStorage) Ping(_ time.Duration) error { return nil }
-func (f *fakeStorage) CreateEvaluationJob(_ *api.EvaluationJobConfig, _ string) (*api.EvaluationJobResource, error) {
-	return &api.EvaluationJobResource{
-		Resource: api.EvaluationResource{
-			Resource: api.Resource{ID: "job-1"},
-		},
-	}, nil
+
+func (f *fakeStorage) CreateEvaluationJob(_ *api.EvaluationJobResource) error {
+	return nil
 }
-func (f *fakeStorage) GetEvaluationJob(_ string) (*api.EvaluationJobResource, error) { return nil, nil }
-func (f *fakeStorage) GetEvaluationJobs(_ int, _ int, _ string) (*abstractions.QueryResults[api.EvaluationJobResource], error) {
-	return nil, nil
-}
-func (f *fakeStorage) DeleteEvaluationJob(_ string, _ bool) error { return nil }
+
 func (f *fakeStorage) UpdateEvaluationJobStatus(id string, state api.OverallState, message *api.MessageInfo) error {
 	f.lastStatusID = id
 	f.lastStatus = state
 	return nil
 }
-func (f *fakeStorage) UpdateEvaluationJob(_ string, _ *api.StatusEvent) error { return nil }
-func (f *fakeStorage) CreateCollection(_ *api.CollectionResource) error       { return nil }
-func (f *fakeStorage) GetCollection(_ string, _ bool) (*api.CollectionResource, error) {
-	return nil, nil
+
+func (f *fakeStorage) GetEvaluationJob(_ string) (*api.EvaluationJobResource, error) {
+	return f.job, nil
 }
-func (f *fakeStorage) GetCollections(_ int, _ int) (*abstractions.QueryResults[api.CollectionResource], error) {
-	return nil, nil
+
+func (f *fakeStorage) DeleteEvaluationJob(id string) error {
+	f.deleteID = id
+	return nil
 }
-func (f *fakeStorage) UpdateCollection(_ *api.CollectionResource) error { return nil }
-func (f *fakeStorage) DeleteCollection(_ string) error                  { return nil }
-func (f *fakeStorage) Close() error                                     { return nil }
 
 type fakeRuntime struct {
 	err    error
@@ -84,9 +76,31 @@ func (r *fakeRuntime) RunEvaluationJob(_ *api.EvaluationJobResource, _ *abstract
 	r.called = true
 	return r.err
 }
+func (r *fakeRuntime) DeleteEvaluationJobResources(_ *api.EvaluationJobResource) error {
+	r.called = true
+	return r.err
+}
+
+type deleteRequest struct {
+	*MockRequest
+	queryValues map[string][]string
+	pathValues  map[string]string
+}
+
+func (r *deleteRequest) Query(key string) []string {
+	if values, ok := r.queryValues[key]; ok {
+		return values
+	}
+	return []string{}
+}
+
+func (r *deleteRequest) PathValue(name string) string {
+	return r.pathValues[name]
+}
 
 func TestHandleCreateEvaluationMarksFailedWhenRuntimeErrors(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	// note that the fake storage only implements the functions that are used in this test
 	storage := &fakeStorage{}
 	runtime := &fakeRuntime{err: errors.New("runtime failed")}
 	validate := validator.New()
@@ -144,5 +158,124 @@ func TestHandleCreateEvaluationSucceedsWhenRuntimeOk(t *testing.T) {
 	}
 	if recorder.Code != 202 {
 		t.Fatalf("expected status 202, got %d", recorder.Code)
+	}
+}
+
+func TestHandleCancelEvaluationWithSoftDeleteDoesNotCleanupResources(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	jobID := "job-1"
+	storage := &fakeStorage{
+		job: &api.EvaluationJobResource{
+			Resource: api.EvaluationResource{
+				Resource: api.Resource{ID: jobID},
+			},
+		},
+	}
+	runtime := &fakeRuntime{}
+	validate := validator.New()
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
+	ctx := executioncontext.NewExecutionContext(context.Background(), "req-3", logger, time.Second)
+
+	req := &deleteRequest{
+		MockRequest: createMockRequest("DELETE", "/api/v1/evaluations/jobs/"+jobID),
+		queryValues: map[string][]string{"hard_delete": {"false"}},
+		pathValues:  map[string]string{constants.PATH_PARAMETER_JOB_ID: jobID},
+	}
+	recorder := httptest.NewRecorder()
+	resp := MockResponseWrapper{recorder: recorder}
+
+	h.HandleCancelEvaluation(ctx, req, resp)
+
+	if runtime.called {
+		t.Fatalf("expected runtime cleanup not to be invoked for soft delete")
+	}
+	if recorder.Code != 204 {
+		t.Fatalf("expected 204 response, got %d", recorder.Code)
+	}
+}
+
+func TestHandleDeleteEvaluationCleansUpResources(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	jobID := "job-2"
+	storage := &fakeStorage{
+		job: &api.EvaluationJobResource{
+			Resource: api.EvaluationResource{
+				Resource: api.Resource{ID: jobID},
+			},
+		},
+	}
+	runtime := &fakeRuntime{}
+	validate := validator.New()
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
+	ctx := executioncontext.NewExecutionContext(context.Background(), "req-4", logger, time.Second)
+
+	req := &deleteRequest{
+		MockRequest: createMockRequest("DELETE", "/api/v1/evaluations/jobs/"+jobID),
+		queryValues: map[string][]string{"hard_delete": {"true"}},
+		pathValues:  map[string]string{constants.PATH_PARAMETER_JOB_ID: jobID},
+	}
+	recorder := httptest.NewRecorder()
+	resp := MockResponseWrapper{recorder: recorder}
+
+	h.HandleCancelEvaluation(ctx, req, resp)
+
+	if !runtime.called {
+		t.Fatalf("expected runtime cleanup to be invoked for hard delete")
+	}
+	if storage.deleteID != jobID {
+		t.Fatalf("expected delete to be invoked for %s, got %s", jobID, storage.deleteID)
+	}
+	if recorder.Code != 204 {
+		t.Fatalf("expected 204 response, got %d", recorder.Code)
+	}
+}
+
+func TestHandleCreateEvaluationRejectsMissingBenchmarkID(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	storage := &fakeStorage{}
+	runtime := &fakeRuntime{}
+	validate := validator.New()
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
+
+	req := &bodyRequest{
+		MockRequest: createMockRequest("POST", "/api/v1/evaluations/jobs"),
+		body:        []byte(`{"model":{"url":"http://test.com","name":"test"},"benchmarks":[{"provider_id":"garak"}]}`),
+	}
+	ctx := executioncontext.NewExecutionContext(context.Background(), "req-3", logger, time.Second)
+	recorder := httptest.NewRecorder()
+	resp := MockResponseWrapper{recorder: recorder}
+
+	h.HandleCreateEvaluation(ctx, req, resp)
+
+	if runtime.called {
+		t.Fatalf("did not expect runtime to be invoked")
+	}
+	if recorder.Code != 400 {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
+	}
+}
+
+func TestHandleCreateEvaluationRejectsMissingProviderID(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	storage := &fakeStorage{}
+	runtime := &fakeRuntime{}
+	validate := validator.New()
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
+
+	req := &bodyRequest{
+		MockRequest: createMockRequest("POST", "/api/v1/evaluations/jobs"),
+		body:        []byte(`{"model":{"url":"http://test.com","name":"test"},"benchmarks":[{"id":"bench-1"}]}`),
+	}
+	ctx := executioncontext.NewExecutionContext(context.Background(), "req-4", logger, time.Second)
+	recorder := httptest.NewRecorder()
+	resp := MockResponseWrapper{recorder: recorder}
+
+	h.HandleCreateEvaluation(ctx, req, resp)
+
+	if runtime.called {
+		t.Fatalf("did not expect runtime to be invoked")
+	}
+	if recorder.Code != 400 {
+		t.Fatalf("expected status 400, got %d", recorder.Code)
 	}
 }

@@ -65,7 +65,7 @@ type MessageInfo struct {
 // BenchmarkConfig represents a reference to a benchmark
 type BenchmarkConfig struct {
 	Ref
-	ProviderID string         `json:"provider_id"`
+	ProviderID string         `json:"provider_id" validate:"required"`
 	Parameters map[string]any `json:"parameters,omitempty"`
 }
 
@@ -142,22 +142,17 @@ type BenchmarkResult struct {
 
 // EvaluationJobResults represents results section for EvaluationJobResource
 type EvaluationJobResults struct {
-	TotalEvaluations     int                `json:"total_evaluations"`
-	CompletedEvaluations int                `json:"completed_evaluations,omitempty"`
-	FailedEvaluations    int                `json:"failed_evaluations,omitempty"`
-	Benchmarks           []*BenchmarkResult `json:"benchmarks,omitempty" validate:"omitempty,dive"`
-	MLFlowExperimentURL  *string            `json:"mlflow_experiment_url,omitempty"`
+	Benchmarks          []BenchmarkResult `json:"benchmarks,omitempty" validate:"omitempty,dive"`
+	MLFlowExperimentURL string            `json:"mlflow_experiment_url,omitempty"`
 }
 
 // EvaluationJobConfig represents evaluation job request schema
 type EvaluationJobConfig struct {
-	Model          ModelRef          `json:"model" validate:"required"`
-	Benchmarks     []BenchmarkConfig `json:"benchmarks" validate:"required,min=1,dive"`
-	Collection     Ref               `json:"collection"`
-	Experiment     *ExperimentConfig `json:"experiment,omitempty"`
-	TimeoutMinutes *int              `json:"timeout_minutes,omitempty"`
-	RetryAttempts  *int              `json:"retry_attempts,omitempty"`
-	Custom         map[string]any    `json:"custom,omitempty"`
+	Model      ModelRef          `json:"model" validate:"required"`
+	Benchmarks []BenchmarkConfig `json:"benchmarks" validate:"required,min=1,dive"`
+	Collection *Ref              `json:"collection,omitempty"`
+	Experiment *ExperimentConfig `json:"experiment,omitempty"`
+	Custom     map[string]any    `json:"custom,omitempty"`
 }
 
 type EvaluationResource struct {
@@ -168,7 +163,7 @@ type EvaluationResource struct {
 
 type EvaluationJobStatus struct {
 	EvaluationJobState
-	Benchmarks []*BenchmarkStatus `json:"benchmarks,omitempty"`
+	Benchmarks []BenchmarkStatus `json:"benchmarks,omitempty"`
 }
 
 // EvaluationJobResource represents evaluation job resource response

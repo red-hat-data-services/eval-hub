@@ -1,49 +1,57 @@
 package mlflow
 
 import (
-	"os"
+	"context"
+	"log/slog"
 
-	"github.com/eval-hub/eval-hub/internal/executioncontext"
+	"github.com/eval-hub/eval-hub/internal/config"
 	"github.com/eval-hub/eval-hub/internal/messages"
 	"github.com/eval-hub/eval-hub/internal/serviceerrors"
 	"github.com/eval-hub/eval-hub/pkg/api"
 	"github.com/eval-hub/eval-hub/pkg/mlflowclient"
 )
 
-func NewMLFlowClient() *mlflowclient.Client {
-	// for now we just use the environment variable to get the tracking URI
-	if os.Getenv("MLFLOW_TRACKING_URI") != "" {
-		return mlflowclient.NewClient(os.Getenv("MLFLOW_TRACKING_URI"))
+func NewMLFlowClient(config *config.Config, logger *slog.Logger) *mlflowclient.Client {
+	url := ""
+	if config.MLFlow != nil && config.MLFlow.TrackingURI != "" {
+		url = config.MLFlow.TrackingURI
 	}
-	return nil
+
+	if url == "" {
+		logger.Warn("MLFlow tracking URI is not set, skipping MLFlow client creation")
+		return nil
+	}
+
+	client := mlflowclient.NewClient(url).WithContext(context.Background()).WithLogger(logger)
+
+	logger.Info("MLFlow tracking enabled", "mlflow_experiment_url", client.GetExperimentsURL())
+
+	return client
 }
 
-func GetExperimentID(ctx *executioncontext.ExecutionContext, mlflowClient *mlflowclient.Client, experiment *api.ExperimentConfig) (string, error) {
+func GetExperimentID(mlflowClient *mlflowclient.Client, experiment *api.ExperimentConfig) (experimentID string, experimentURL string, err error) {
 	if experiment == nil || experiment.Name == "" {
-		return "", nil
+		return "", "", nil
 	}
 
 	// if we get here then we have an experiment name so we need an MLFlow client
 
 	if mlflowClient == nil {
-		return "", serviceerrors.NewServiceError(messages.MLFlowRequiredForExperiment)
+		return "", "", serviceerrors.NewServiceError(messages.MLFlowRequiredForExperiment)
 	}
-
-	// use the context from the execution context
-	mlflowClient = mlflowClient.WithContext(ctx.Ctx).WithLogger(ctx.Logger)
 
 	mlflowExperiment, err := mlflowClient.GetExperimentByName(experiment.Name)
 	if err != nil {
 		if !mlflowclient.IsResourceDoesNotExistError(err) {
 			// This is some other error than "resource does not exist" so report it as an error
-			return "", serviceerrors.NewServiceError(messages.MLFlowRequestFailed, "Error", err.Error())
+			return "", "", serviceerrors.NewServiceError(messages.MLFlowRequestFailed, "Error", err.Error())
 		}
 	}
 
 	if mlflowExperiment != nil && mlflowExperiment.Experiment.LifecycleStage == "active" && mlflowExperiment.Experiment.ExperimentID != "" {
-		ctx.Logger.Info("Found active experiment", "experiment_name", experiment.Name, "experiment_id", mlflowExperiment.Experiment.ExperimentID)
+		mlflowClient.GetLogger().Info("Found active experiment", "experiment_name", experiment.Name, "experiment_id", mlflowExperiment.Experiment.ExperimentID)
 		// we found an active experiment with the given name so return the ID
-		return mlflowExperiment.Experiment.ExperimentID, nil
+		return mlflowExperiment.Experiment.ExperimentID, mlflowClient.GetExperimentsURL(), nil
 	}
 
 	// There is a possibility that the experiment was created between the get and the create
@@ -57,9 +65,9 @@ func GetExperimentID(ctx *executioncontext.ExecutionContext, mlflowClient *mlflo
 	}
 	resp, err := mlflowClient.CreateExperiment(&req)
 	if err != nil {
-		return "", serviceerrors.NewServiceError(messages.MLFlowRequestFailed, "Error", err.Error())
+		return "", "", serviceerrors.NewServiceError(messages.MLFlowRequestFailed, "Error", err.Error())
 	}
 
-	ctx.Logger.Info("Created new experiment", "experiment_name", experiment.Name, "experiment_id", resp.ExperimentID)
-	return resp.ExperimentID, nil
+	mlflowClient.GetLogger().Info("Created new experiment", "experiment_name", experiment.Name, "experiment_id", resp.ExperimentID)
+	return resp.ExperimentID, mlflowClient.GetExperimentsURL(), nil
 }

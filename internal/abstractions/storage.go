@@ -17,16 +17,13 @@ type Storage interface {
 	WithLogger(logger *slog.Logger) Storage
 	WithContext(ctx context.Context) Storage
 
-	// This is used to identify the storage implementation in the logs and error messages
-	GetDatasourceName() string
-
 	Ping(timeout time.Duration) error
 
 	// Evaluation job operations
-	CreateEvaluationJob(evaluation *api.EvaluationJobConfig, mlflowExperimentID string) (*api.EvaluationJobResource, error)
+	CreateEvaluationJob(evaluation *api.EvaluationJobResource) error
 	GetEvaluationJob(id string) (*api.EvaluationJobResource, error)
 	GetEvaluationJobs(limit int, offset int, statusFilter string) (*QueryResults[api.EvaluationJobResource], error)
-	DeleteEvaluationJob(id string, hardDelete bool) error
+	DeleteEvaluationJob(id string) error
 	UpdateEvaluationJob(id string, runStatus *api.StatusEvent) error
 	// UpdateEvaluationJobStatus is used to update the status of an evaluation job and is internal - do we need it here?
 	UpdateEvaluationJobStatus(id string, state api.OverallState, message *api.MessageInfo) error
