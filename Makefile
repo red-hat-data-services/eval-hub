@@ -1,4 +1,4 @@
-.PHONY: help autoupdate-precommit pre-commit clean build start-service stop-service lint test fmt vet update-deps
+.PHONY: help autoupdate-precommit pre-commit clean build build-coverage start-service stop-service lint test test-fvt-server test-all test-coverage test-fvt-coverage test-fvt-server-coverage test-all-coverage install-deps update-deps get-deps fmt vet update-deps generate-public-docs verify-api-docs generate-ignore-file documentation check-unused-components
 
 # Variables
 BINARY_NAME = eval-hub
@@ -10,6 +10,11 @@ PORT ?= 8080
 .DEFAULT_GOAL := help
 
 UNAME := $(shell uname)
+
+# Auto-detect platform for cross-compilation and wheel building
+# Uses Go's native platform detection - override by setting CROSS_GOOS/CROSS_GOARCH env vars if needed.
+CROSS_GOOS ?= $(shell go env GOOS)
+CROSS_GOARCH ?= $(shell go env GOARCH)
 
 DATE ?= $(shell date +%FT%T%z)
 
@@ -33,20 +38,26 @@ clean: ## Remove build artifacts
 	@echo "Cleaning..."
 	@rm -rf $(BIN_DIR)
 	@rm -f $(BINARY_NAME)
-	@rm -f coverage.out coverage.html
 	@go clean ${CLEAN_OPTS}
 	@echo "Clean complete"
+
+$(BIN_DIR):
+	@mkdir -p $(BIN_DIR)
 
 BUILD_PACKAGE ?= main
 FULL_BUILD_NUMBER ?= 0.0.1
 LDFLAGS_X = -X "${BUILD_PACKAGE}.Build=${FULL_BUILD_NUMBER}" -X "${BUILD_PACKAGE}.BuildDate=$(DATE)"
 LDFLAGS = -buildmode=exe ${LDFLAGS_X}
 
-build: ## Build the binary
+build: $(BIN_DIR) ## Build the binary
 	@echo "Building $(BINARY_NAME) with ${LDFLAGS}"
-	@mkdir -p $(BIN_DIR)
-	@go build -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
+	@go build -race -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Build complete: $(BIN_DIR)/$(BINARY_NAME)"
+
+build-coverage: $(BIN_DIR) ## Build the binary with coverage
+	@echo "Building $(BINARY_NAME)-cov with -cover -covermode=atomic -ldflags ${LDFLAGS} "
+	@go build -race -cover -covermode=atomic -coverpkg=./... -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(BINARY_NAME)-cov $(CMD_PATH)
+	@echo "Build complete: $(BIN_DIR)/$(BINARY_NAME)-cov"
 
 SERVER_PID_FILE ?= $(BIN_DIR)/pid
 
@@ -57,11 +68,15 @@ SERVICE_LOG ?= $(BIN_DIR)/service.log
 
 start-service: ${SERVER_PID_FILE} build ## Run the application in background
 	@echo "Running $(BINARY_NAME) on port $(PORT)..."
-	# @PORT=$(PORT) go run -ldflags "${LDFLAGS}" $(CMD_PATH)/main.go > ${SERVICE_LOG}
 	@./scripts/start_server.sh "${SERVER_PID_FILE}" "${BIN_DIR}/$(BINARY_NAME)" "${SERVICE_LOG}" ${PORT} ""
+
+start-service-coverage: ${SERVER_PID_FILE} build-coverage ## Run the application in background
+	@echo "Running $(BINARY_NAME)-cov on port $(PORT)..."
+	@./scripts/start_server.sh "${SERVER_PID_FILE}" "${BIN_DIR}/$(BINARY_NAME)-cov" "${SERVICE_LOG}" ${PORT} "${BIN_DIR}"
 
 stop-service:
 	-./scripts/stop_server.sh "${SERVER_PID_FILE}"
+	! grep -i -F panic "${SERVICE_LOG}"
 
 lint: ## Lint the code (runs go vet)
 	@echo "Linting code..."
@@ -80,29 +95,37 @@ vet: ## Run go vet
 
 test: ## Run unit tests
 	@echo "Running unit tests..."
-	@go test -v ./internal/...
+	@go test -v ./internal/... ./cmd/...
 
-test-fvt: ## Run FVT (Functional Verification Tests) using godog
+test-fvt: $(BIN_DIR) ## Run FVT (Functional Verification Tests) using godog
 	@echo "Running FVT tests..."
-	@go test -v ./tests/features/...
+	@go test -v -race ./tests/features/...
 
 test-all: test test-fvt ## Run all tests (unit + FVT)
 
-test-coverage: ## Run unit tests with coverage
+SERVER_URL ?= http://localhost:8080
+
+test-fvt-server: start-service ## Run FVT tests using godog against a running server
+	@SERVER_URL="${SERVER_URL}" make test-fvt; status=$$?; make stop-service; exit $$status
+
+test-coverage: $(BIN_DIR) ## Run unit tests with coverage
 	@echo "Running unit tests with coverage..."
-	@mkdir -p $(BIN_DIR)
-	@go test -v -coverprofile=$(BIN_DIR)/coverage.out ./internal/...
+	@go test -v -race -coverprofile=$(BIN_DIR)/coverage.out -covermode=atomic ./internal/... ./cmd/...
 	@go tool cover -html=$(BIN_DIR)/coverage.out -o $(BIN_DIR)/coverage.html
 	@echo "Coverage report generated: $(BIN_DIR)/coverage.html"
 
-test-fvt-coverage: ## Run integration (FVT) tests with coverage
+test-fvt-coverage: $(BIN_DIR)## Run integration (FVT) tests with coverage
 	@echo "Running integration (FVT) tests with coverage..."
-	@mkdir -p $(BIN_DIR)
-	@go test -v -coverprofile=$(BIN_DIR)/coverage-fvt.out ./tests/features/...
+	@go test -v -race -coverprofile=$(BIN_DIR)/coverage-fvt.out -covermode=atomic ./tests/features/...
 	@go tool cover -html=$(BIN_DIR)/coverage-fvt.out -o $(BIN_DIR)/coverage-fvt.html
 	@echo "Coverage report generated: $(BIN_DIR)/coverage-fvt.html"
 
-test-all-coverage: test-coverage test-fvt-coverage ## Run all tests (unit + FVT) with coverage
+test-fvt-server-coverage: start-service-coverage ## Run FVT tests using godog against a running server with coverage
+	@echo "Running FVT tests with coverage against a running server..."
+	@GOCOVERDIR="${BIN_DIR}" SERVER_URL="${SERVER_URL}" make test-fvt; status=$$?; make stop-service; exit $$status
+	go tool covdata textfmt -i ${BIN_DIR} -o ${BIN_DIR}/coverage-fvt.out
+
+test-all-coverage: test-coverage test-fvt-server-coverage ## Run all tests (unit + FVT) with coverage
 
 install-deps: ## Install dependencies
 	@echo "Installing dependencies..."
@@ -161,6 +184,134 @@ create-user:
 grant-permissions:
 	sudo -u postgres psql -c "GRANT ALL PRIVILEGES ON DATABASE eval_hub TO eval_hub;"
 
+# Cross-compilation variables
+CROSS_OUTPUT_SUFFIX = $(CROSS_GOOS)-$(CROSS_GOARCH)
+CROSS_OUTPUT = bin/eval-hub-$(CROSS_OUTPUT_SUFFIX)$(if $(filter windows,$(CROSS_GOOS)),.exe,)
+
+.PHONY: cross-compile
+cross-compile: ## Build for specific platform: make cross-compile CROSS_GOOS=linux CROSS_GOARCH=amd64
+	@echo "Cross-compiling for $(CROSS_GOOS)/$(CROSS_GOARCH)..."
+	@mkdir -p $(BIN_DIR)
+	GOOS=$(CROSS_GOOS) GOARCH=$(CROSS_GOARCH) CGO_ENABLED=0 go build -o $(CROSS_OUTPUT) -ldflags="-s -w ${LDFLAGS_X}" $(CMD_PATH)
+	@echo "Built: $(CROSS_OUTPUT)"
+
+.PHONY: build-all-platforms
+build-all-platforms: ## Build for all supported platforms
+	@$(MAKE) cross-compile CROSS_GOOS=linux CROSS_GOARCH=amd64
+	@$(MAKE) cross-compile CROSS_GOOS=linux CROSS_GOARCH=arm64
+	@$(MAKE) cross-compile CROSS_GOOS=darwin CROSS_GOARCH=amd64
+	@$(MAKE) cross-compile CROSS_GOOS=darwin CROSS_GOARCH=arm64
+	@$(MAKE) cross-compile CROSS_GOOS=windows CROSS_GOARCH=amd64
+
+# Python virtual environment - expects uv venv
+VENV_DIR = .venv
+VENV_PYTHON = $(VENV_DIR)/bin/python
+
+.PHONY: venv
+venv: ## Create Python virtual environment using uv
+	@if [ ! -d "$(VENV_DIR)" ]; then \
+		echo "Creating uv virtual environment..."; \
+		uv venv $(VENV_DIR); \
+		echo "Virtual environment created at $(VENV_DIR)"; \
+	else \
+		echo "Virtual environment already exists at $(VENV_DIR)"; \
+	fi
+
+# Python wheel building - auto-detect platform based on CROSS_GOOS/CROSS_GOARCH (we re-use CROSS_OUTPUT_SUFFIX)
+# Platform mappings as defined also in .github/workflows/publish-python-server.yml
+ifeq ($(CROSS_OUTPUT_SUFFIX),linux-amd64)
+    WHEEL_PLATFORM ?= manylinux_2_17_x86_64
+    WHEEL_BINARY ?= eval-hub-linux-amd64
+else ifeq ($(CROSS_OUTPUT_SUFFIX),linux-arm64)
+    WHEEL_PLATFORM ?= manylinux_2_17_aarch64
+    WHEEL_BINARY ?= eval-hub-linux-arm64
+else ifeq ($(CROSS_OUTPUT_SUFFIX),darwin-amd64)
+    WHEEL_PLATFORM ?= macosx_10_9_x86_64
+    WHEEL_BINARY ?= eval-hub-darwin-amd64
+else ifeq ($(CROSS_OUTPUT_SUFFIX),darwin-arm64)
+    WHEEL_PLATFORM ?= macosx_11_0_arm64
+    WHEEL_BINARY ?= eval-hub-darwin-arm64
+else ifeq ($(CROSS_OUTPUT_SUFFIX),windows-amd64)
+    WHEEL_PLATFORM ?= win_amd64
+    WHEEL_BINARY ?= eval-hub-windows-amd64
+else
+    # Fallback to macOS ARM (M-chips) if platform not recognized
+    WHEEL_PLATFORM ?= macosx_11_0_arm64
+    WHEEL_BINARY ?= eval-hub-darwin-arm64
+endif
+
+.PHONY: install-wheel-tools
+install-wheel-tools: venv ## Install Python wheel build tools using uv
+	@echo "Installing wheel build tools via uv..."
+	@uv pip install build wheel setuptools
+
+.PHONY: clean-wheels
+clean-wheels: ## Clean Python wheel build artifacts
+	@echo "Cleaning wheel build artifacts..."
+	@rm -rf python-server/dist/
+	@rm -rf python-server/build/
+	@rm -rf python-server/*.egg-info
+	@find python-server/evalhub_server/binaries/ -type f ! -name '.gitkeep' -delete
+
+.PHONY: build-wheel
+build-wheel: ## Build Python wheel: make build-wheel WHEEL_PLATFORM=manylinux_2_17_x86_64 WHEEL_BINARY=eval-hub-linux-amd64
+	@if [ "$${GITHUB_ACTIONS}" != "true" ]; then \
+		echo "Downloading binary $(WHEEL_PLATFORM) $(WHEEL_BINARY)"; \
+		mkdir -p python-server/evalhub_server/binaries/; \
+		find python-server/evalhub_server/binaries/ -type f ! -name '.gitkeep' -delete; \
+		cp bin/$(WHEEL_BINARY)* python-server/evalhub_server/binaries/; \
+	else \
+		echo "Skipping copy (GITHUB_ACTIONS): binary provided by actions/download-artifact"; \
+	fi
+	@find python-server/evalhub_server/binaries/ -type f ! -name '.gitkeep' -exec chmod +x {} +
+	@echo "Building wheel for $(WHEEL_PLATFORM) with binary $(WHEEL_BINARY)..."
+	@rm -rf python-server/build/
+	WHEEL_PLATFORM=$(WHEEL_PLATFORM) uv build --wheel python-server
+
+.PHONY: build-all-wheels
+build-all-wheels: clean-wheels build-all-platforms ## Build all Python wheels for all platforms
+	@$(MAKE) build-wheel WHEEL_PLATFORM=manylinux_2_17_x86_64 WHEEL_BINARY=eval-hub-linux-amd64
+	@$(MAKE) build-wheel WHEEL_PLATFORM=manylinux_2_17_aarch64 WHEEL_BINARY=eval-hub-linux-arm64
+	@$(MAKE) build-wheel WHEEL_PLATFORM=macosx_10_9_x86_64 WHEEL_BINARY=eval-hub-darwin-amd64
+	@$(MAKE) build-wheel WHEEL_PLATFORM=macosx_11_0_arm64 WHEEL_BINARY=eval-hub-darwin-arm64
+	@$(MAKE) build-wheel WHEEL_PLATFORM=win_amd64 WHEEL_BINARY=eval-hub-windows-amd64
+
 .PHONY: cls
 cls:
 	printf "\33c\e[3J"
+
+## Targets for the API documentation
+
+.PHONY: generate-public-docs verify-api-docs generate-ignore-file
+
+REDOCLY_CLI ?= ${PWD}/node_modules/.bin/redocly
+
+${REDOCLY_CLI}:
+	npm i @redocly/cli
+
+clean-docs:
+	rm -f docs/openapi.yaml docs/openapi.json docs/openapi-internal.yaml docs/openapi-internal.json docs/*.html
+
+generate-public-docs: ${REDOCLY_CLI}
+	${REDOCLY_CLI} bundle external@latest --output docs/openapi.yaml --remove-unused-components
+	${REDOCLY_CLI} bundle external@latest --ext json --output docs/openapi.json
+	${REDOCLY_CLI} bundle internal@latest --output docs/openapi-internal.yaml --remove-unused-components
+	${REDOCLY_CLI} bundle internal@latest --ext json --output docs/openapi-internal.json
+	${REDOCLY_CLI} build-docs docs/openapi.json --output=docs/index-public.html
+	${REDOCLY_CLI} build-docs docs/openapi-internal.json --output=docs/index-private.html
+	cp docs/index-public.html docs/index.html
+
+verify-api-docs: ${REDOCLY_CLI}
+	${REDOCLY_CLI} lint
+	@echo "Tip: open docs/openapi.yaml in Swagger Editor (such as https://editor.swagger.io/) to automatically inspect the rendered spec."
+
+generate-ignore-file: ${REDOCLY_CLI}
+	${REDOCLY_CLI} lint --generate-ignore-file ./docs/src/openapi.yaml
+
+check-unused-components:
+	./docs/scripts/check_unused_components.sh
+
+documentation: check-unused-components generate-public-docs verify-api-docs
+
+update-redocly-cli:
+	npm i @redocly/cli@latest

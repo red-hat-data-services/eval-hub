@@ -33,6 +33,7 @@ Please mark the relevant component(s):
 - [ ] Kubernetes/OpenShift deployment
 - [ ] Configuration system
 - [ ] Monitoring/metrics
+- [ ] Storage
 - [ ] Documentation
 - [ ] Tests
 - [ ] CI/CD
@@ -140,7 +141,6 @@ Please confirm the following before submitting:
 - [ ] Self-review of code has been performed
 - [ ] Code is properly commented
 - [ ] No new linting warnings introduced
-- [ ] Type hints added for new code
 
 ### Testing
 - [ ] Tests have been added for new functionality

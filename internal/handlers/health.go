@@ -1,21 +1,36 @@
 package handlers
 
 import (
-	"encoding/json"
-	"net/http"
 	"time"
 
 	"github.com/eval-hub/eval-hub/internal/executioncontext"
+	"github.com/eval-hub/eval-hub/internal/http_wrappers"
 )
 
-func (h *Handlers) HandleHealth(ctx *executioncontext.ExecutionContext, w http.ResponseWriter) {
-	if !h.checkMethod(ctx, http.MethodGet, w) {
-		return
-	}
+const (
+	STATUS_HEALTHY = "healthy"
+)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":    "healthy",
-		"timestamp": time.Now().UTC().Format(time.RFC3339),
-	})
+type HealthResponse struct {
+	Status    string    `json:"status"`
+	Timestamp time.Time `json:"timestamp"`
+	Build     string    `json:"build,omitempty"`
+	BuildDate string    `json:"build_date,omitempty"`
+}
+
+func (h *Handlers) HandleHealth(ctx *executioncontext.ExecutionContext, r http_wrappers.RequestWrapper, w http_wrappers.ResponseWrapper, build string, buildDate string) {
+	if build == "0.0.1" {
+		// for now we only want a real build number and not the default value
+		build = ""
+	}
+	// for now we serialize on each call but we could add
+	// a struct to store the health information and only
+	// serialize it when something changes
+	healthInfo := HealthResponse{
+		Status:    STATUS_HEALTHY,
+		Timestamp: time.Now().UTC(),
+		Build:     build,
+		BuildDate: buildDate,
+	}
+	w.WriteJSON(healthInfo, 200)
 }

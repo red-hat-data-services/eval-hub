@@ -1,0 +1,23 @@
+type: object
+description: Result of a single benchmark run
+properties:
+  id:
+    type: string
+    description: Benchmark ID
+  provider_id:
+    type: string
+    description: Provider ID
+  metrics:
+    type: object
+    additionalProperties: true
+    description: Metric name to value
+  artifacts:
+    type: object
+    additionalProperties: true
+    description: Artifact key to location/info
+  mlflow_run_id:
+    type: string
+    description: MLFlow run ID
+  logs_path:
+    type: string
+    description: Path to logs

@@ -25,7 +25,7 @@ const (
 )
 
 type Ref struct {
-	ID string `json:"id"`
+	ID string `json:"id" validate:"required"`
 }
 
 type HRef struct {
@@ -34,7 +34,9 @@ type HRef struct {
 
 // Error represents an error response
 type Error struct {
-	Detail string `json:"detail"`
+	MessageCode string `json:"message_code"`
+	Message     string `json:"message"`
+	Trace       string `json:"trace"`
 }
 
 // PatchOperation represents a single patch operation
@@ -61,4 +63,10 @@ type Page struct {
 	Next       *HRef `json:"next,omitempty"`
 	Limit      int   `json:"limit"`
 	TotalCount int   `json:"total_count"`
+}
+
+// EnvVar captures environment variables for the job template.
+type EnvVar struct {
+	Name  string `mapstructure:"name" yaml:"name"`
+	Value string `mapstructure:"value" yaml:"value"`
 }

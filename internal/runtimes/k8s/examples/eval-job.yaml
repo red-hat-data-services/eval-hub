@@ -1,0 +1,69 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: eval-job-001-mmlu
+  namespace: evalhub
+  labels:
+    app: "evalhub"
+    component: "evaluation-job"
+    job_id: "001"
+    provider_id: "lm_evaluation_harness"
+    benchmark_id: "mmlu"
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app: "evalhub"
+        component: "evaluation-job"
+        job_id: "001"
+        provider_id: "lm_evaluation_harness"
+        benchmark_id: "mmlu"
+    spec:
+      serviceAccountName: evalhub-jobs
+      restartPolicy: Never
+      containers:
+        - name: adapter
+          image: quay.io/evalhub/adapter:latest
+          imagePullPolicy: Always
+          command: []
+          env:
+            - name: JOB_ID
+              value: "001"
+            - name: EVALHUB_URL
+              value: "https://evalhub.evalhub.svc.cluster.local:8443"
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "512Mi"
+            limits:
+              cpu: "1"
+              memory: "2Gi"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - "ALL"
+            seccompProfile:
+              type: RuntimeDefault
+          volumeMounts:
+            - name: job-spec
+              mountPath: /meta/job.json
+              subPath: job.json
+              readOnly: true
+            - name: data
+              mountPath: /data
+            - name: evalhub-service-ca
+              mountPath: /etc/pki/ca-trust/source/anchors
+              readOnly: true
+      volumes:
+        - name: job-spec
+          configMap:
+            name: eval-job-001-mmlu-spec
+        - name: data
+          emptyDir: {}
+        - name: evalhub-service-ca
+          configMap:
+            name: evalhub-service-ca

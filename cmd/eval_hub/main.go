@@ -2,10 +2,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"log/slog"
-	"net/http"
+
 	"os"
 	"os/signal"
 	"syscall"
@@ -14,6 +15,8 @@ import (
 	"github.com/eval-hub/eval-hub/cmd/eval_hub/server"
 	"github.com/eval-hub/eval-hub/internal/config"
 	"github.com/eval-hub/eval-hub/internal/logging"
+	"github.com/eval-hub/eval-hub/internal/mlflow"
+	"github.com/eval-hub/eval-hub/internal/runtimes"
 	"github.com/eval-hub/eval-hub/internal/storage"
 	"github.com/eval-hub/eval-hub/internal/validation"
 )
@@ -28,9 +31,6 @@ var (
 )
 
 func main() {
-	// TODO write fatal errors to the error file and close down the server
-
-	// Create logger once for all requests
 	logger, logShutdown, err := logging.NewLogger()
 	if err != nil {
 		// we do this as no point trying to continue
@@ -49,17 +49,35 @@ func main() {
 		// we do this as no point trying to continue
 		startUpFailed(serviceConfig, err, "Failed to create validator", logger)
 	}
-	// serviceConfig.Validator = validator
 
 	// set up the storage
-	storage, err := storage.NewStorage(serviceConfig, logger)
+	storage, err := storage.NewStorage(serviceConfig.Database, logger)
 	if err != nil {
 		// we do this as no point trying to continue
 		startUpFailed(serviceConfig, err, "Failed to create storage", logger)
 	}
-	// serviceConfig.Storage = storage
 
-	srv, err := server.NewServer(logger, serviceConfig, storage, validate)
+	// set up the provider configs
+	providerConfigs, err := config.LoadProviderConfigs(logger)
+	if err != nil {
+		// we do this as no point trying to continue
+		startUpFailed(serviceConfig, err, "Failed to create provider configs", logger)
+	}
+
+	// setup runtime
+	runtime, err := runtimes.NewRuntime(logger, serviceConfig, providerConfigs)
+	if err != nil {
+		// we do this as no point trying to continue
+		startUpFailed(serviceConfig, err, "Failed to create runtime", logger)
+	}
+	logger.Info("Runtime created", "runtime", runtime.Name())
+
+	mlflowClient, err := mlflow.NewMLFlowClient(serviceConfig, logger)
+	if err != nil {
+		startUpFailed(serviceConfig, err, "Failed to create MLFlow client", logger)
+	}
+
+	srv, err := server.NewServer(logger, serviceConfig, providerConfigs, storage, validate, runtime, mlflowClient)
 	if err != nil {
 		// we do this as no point trying to continue
 		startUpFailed(serviceConfig, err, "Failed to create server", logger)
@@ -71,14 +89,19 @@ func main() {
 		"version", serviceConfig.Service.Version,
 		"build", serviceConfig.Service.Build,
 		"build_date", serviceConfig.Service.BuildDate,
-		"storage", storage.GetDatasourceName(),
 		"validator", validate != nil,
+		"local", serviceConfig.Service.LocalMode,
+		"mlflow_tracking", mlflowClient != nil,
 	)
 
 	// Start server in a goroutine
 	go func() {
-		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
+		if err := srv.Start(); err != nil {
 			// we do this as no point trying to continue
+			if errors.Is(err, &server.ServerClosedError{}) {
+				logger.Info("Server closed gracefully")
+				return
+			}
 			startUpFailed(serviceConfig, err, "Server failed to start", logger)
 		}
 	}()
@@ -92,7 +115,7 @@ func main() {
 
 	// shutdown the storage
 	if err := storage.Close(); err != nil {
-		logger.Error("Failed to close storage", "error", err.Error(), "storage", storage.GetDatasourceName())
+		logger.Error("Failed to close storage", "error", err.Error())
 	}
 
 	// Create a context with timeout for graceful shutdown

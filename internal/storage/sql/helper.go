@@ -10,10 +10,10 @@ import (
 // TODO - do we want to pull out all the SQL statements like this or leave them in the functions?
 
 // SQLite: use ? placeholders
-const SQLITE_INSERT_EVALUATION_STATEMENT = `INSERT INTO evaluations (tenant_id, status, entity) VALUES (?, ?, ?);`
+const SQLITE_INSERT_EVALUATION_STATEMENT = `INSERT INTO evaluations (id, tenant_id, status, experiment_id, entity) VALUES (?, ?, ?, ?, ?);`
 
 // PostgreSQL: use $1, $2 placeholders and RETURNING id clause
-const POSTGRES_INSERT_EVALUATION_STATEMENT = `INSERT INTO evaluations (tenant_id, status, entity) VALUES ($1, $2, $3) RETURNING id;`
+const POSTGRES_INSERT_EVALUATION_STATEMENT = `INSERT INTO evaluations (id, tenant_id, status, experiment_id, entity) VALUES ($1, $2, $3, $4, $5) RETURNING id;`
 
 // TODO: Add collection insert statement
 const INSERT_COLLECTION_STATEMENT = `INSERT INTO collections (entity) VALUES (?);`
@@ -63,10 +63,26 @@ func createGetEntityStatement(driver, tableName string) (string, error) {
 
 	switch driver {
 	case POSTGRES_DRIVER:
-		return fmt.Sprintf(`SELECT id, created_at, updated_at, status, entity FROM %s WHERE id = $1;`, quotedTable), nil
+		return fmt.Sprintf(`SELECT id, created_at, updated_at, status, experiment_id, entity FROM %s WHERE id = $1;`, quotedTable), nil
 	case SQLITE_DRIVER:
 		// SQLite: use ? placeholder
-		return fmt.Sprintf(`SELECT id, created_at, updated_at, status, entity FROM %s WHERE id = ?;`, quotedTable), nil
+		return fmt.Sprintf(`SELECT id, created_at, updated_at, status, experiment_id, entity FROM %s WHERE id = ?;`, quotedTable), nil
+	default:
+		return "", getUnsupportedDriverError(driver)
+	}
+}
+
+// createCheckEntityExistsStatement returns a driver-specific SELECT statement
+// to check if an entity exists by ID and retrieve its status
+func createCheckEntityExistsStatement(driver, tableName string) (string, error) {
+	quotedTable := quoteIdentifier(driver, tableName)
+
+	switch driver {
+	case POSTGRES_DRIVER:
+		return fmt.Sprintf(`SELECT id, status FROM %s WHERE id = $1;`, quotedTable), nil
+	case SQLITE_DRIVER:
+		// SQLite: use ? placeholder
+		return fmt.Sprintf(`SELECT id, status FROM %s WHERE id = ?;`, quotedTable), nil
 	default:
 		return "", getUnsupportedDriverError(driver)
 	}
@@ -130,18 +146,18 @@ func createListEntitiesStatement(driver, tableName string, limit, offset int, st
 	switch driver {
 	case POSTGRES_DRIVER:
 		if statusFilter != "" {
-			query = fmt.Sprintf(`SELECT id, created_at, updated_at, status, entity FROM %s WHERE status = $1 ORDER BY id DESC LIMIT $2 OFFSET $3;`, quotedTable)
+			query = fmt.Sprintf(`SELECT id, created_at, updated_at, status, experiment_id, entity FROM %s WHERE status = $1 ORDER BY id DESC LIMIT $2 OFFSET $3;`, quotedTable)
 			args = []any{statusFilter, limit, offset}
 		} else {
-			query = fmt.Sprintf(`SELECT id, created_at, updated_at, status, entity FROM %s ORDER BY id DESC LIMIT $1 OFFSET $2;`, quotedTable)
+			query = fmt.Sprintf(`SELECT id, created_at, updated_at, status, experiment_id, entity FROM %s ORDER BY id DESC LIMIT $1 OFFSET $2;`, quotedTable)
 			args = []any{limit, offset}
 		}
 	case SQLITE_DRIVER:
 		if statusFilter != "" {
-			query = fmt.Sprintf(`SELECT id, created_at, updated_at, status, entity FROM %s WHERE status = ? ORDER BY id DESC LIMIT ? OFFSET ?;`, quotedTable)
+			query = fmt.Sprintf(`SELECT id, created_at, updated_at, status, experiment_id, entity FROM %s WHERE status = ? ORDER BY id DESC LIMIT ? OFFSET ?;`, quotedTable)
 			args = []any{statusFilter, limit, offset}
 		} else {
-			query = fmt.Sprintf(`SELECT id, created_at, updated_at, status, entity FROM %s ORDER BY id DESC LIMIT ? OFFSET ?;`, quotedTable)
+			query = fmt.Sprintf(`SELECT id, created_at, updated_at, status, experiment_id, entity FROM %s ORDER BY id DESC LIMIT ? OFFSET ?;`, quotedTable)
 			args = []any{limit, offset}
 		}
 	default:
@@ -151,19 +167,67 @@ func createListEntitiesStatement(driver, tableName string, limit, offset int, st
 	return query, args, nil
 }
 
-// createUpdateStatusStatement returns a driver-specific UPDATE statement
-// to update the status of an entity by ID
-func createUpdateStatusStatement(driver, tableName string) (string, error) {
+// CreateUpdateEvaluationStatement returns a driver-specific UPDATE statement for the evaluations table,
+// setting only the non-empty fields (status, entity) and updated_at, filtered by id.
+// If status is empty, the query does not set status; if entityJSON is empty, the query does not set entity.
+// Returns the query, args in SET order then id, and an optional error.
+func CreateUpdateEvaluationStatement(driver, tableName, id string, status api.OverallState, entityJSON string) (query string, args []any, err error) {
 	quotedTable := quoteIdentifier(driver, tableName)
+	quotedStatus := quoteIdentifier(driver, "status")
+	quotedEntity := quoteIdentifier(driver, "entity")
+	quotedUpdatedAt := quoteIdentifier(driver, "updated_at")
+	quotedID := quoteIdentifier(driver, "id")
+
+	var setParts []string
+	var argsList []any
+	if status != "" {
+		setParts = append(setParts, quotedStatus)
+		argsList = append(argsList, status)
+	}
+	if entityJSON != "" {
+		setParts = append(setParts, quotedEntity)
+		argsList = append(argsList, entityJSON)
+	}
+	setParts = append(setParts, fmt.Sprintf("%s = CURRENT_TIMESTAMP", quotedUpdatedAt))
+	argsList = append(argsList, id)
 
 	switch driver {
 	case POSTGRES_DRIVER:
-		// PostgreSQL: use $1, $2 placeholders
-		return fmt.Sprintf(`UPDATE %s SET status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2;`, quotedTable), nil
+		return createUpdateEvaluationStatementForPostgres(setParts, argsList, query, quotedTable, quotedID, args)
 	case SQLITE_DRIVER:
-		// SQLite: use ? placeholders
-		return fmt.Sprintf(`UPDATE %s SET status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?;`, quotedTable), nil
+		return createUpdateEvaluationStatementForSQLite(setParts, query, quotedTable, quotedID, args, argsList)
 	default:
-		return "", getUnsupportedDriverError(driver)
+		return "", nil, getUnsupportedDriverError(driver)
 	}
+}
+
+func createUpdateEvaluationStatementForSQLite(setParts []string, query string, quotedTable string, quotedID string, args []any, argsList []any) (string, []any, error) {
+	placeholders := make([]string, 0, len(setParts))
+	for i, part := range setParts {
+		if i < len(setParts)-1 {
+			placeholders = append(placeholders, part+" = ?")
+		} else {
+			placeholders = append(placeholders, part)
+		}
+	}
+	query = fmt.Sprintf(`UPDATE %s SET %s WHERE %s = ?;`,
+		quotedTable, strings.Join(placeholders, ", "), quotedID)
+	args = argsList
+	return query, args, nil
+}
+
+func createUpdateEvaluationStatementForPostgres(setParts []string, argsList []any, query string, quotedTable string, quotedID string, args []any) (string, []any, error) {
+	placeholders := make([]string, 0, len(setParts))
+	for i := range setParts {
+		if i < len(setParts)-1 {
+			placeholders = append(placeholders, fmt.Sprintf("%s = $%d", setParts[i], i+1))
+		} else {
+			placeholders = append(placeholders, setParts[i])
+		}
+	}
+	whereIdx := len(argsList)
+	query = fmt.Sprintf(`UPDATE %s SET %s WHERE %s = $%d;`,
+		quotedTable, strings.Join(placeholders, ", "), quotedID, whereIdx)
+	args = argsList
+	return query, args, nil
 }
