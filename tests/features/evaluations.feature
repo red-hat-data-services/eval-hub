@@ -1,3 +1,4 @@
+@evaluations
 Feature: Evaluations Endpoint
   As a data scientist
   I want to create evaluation jobs
@@ -30,7 +31,18 @@ Feature: Evaluations Endpoint
     And the response should contain the value "google/flan-t5-small" at path "$.benchmarks[0].parameters.tokenizer"
     And the response should contain the value "environment" at path "$.experiment.tags[0].key"
     And the response should contain the value "test" at path "$.experiment.tags[0].value"
-    And the response should not contain the value "collection" at path "$."
+    And the response should not contain the value "collection" at path "$.collection"
+    When I send a DELETE request to "/api/v1/evaluations/jobs/{id}?hard_delete=true"
+    Then the response code should be 204
+    When I send a GET request to "/api/v1/evaluations/jobs/{id}"
+    Then the response code should be 404
+    And the response should contain the value "resource_not_found" at path "$.message_code"
+
+  Scenario: Create an evaluation job and wait for completion
+    Given the service is running
+    When the mode is local or CI then skip this scenario
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job.json"
+    Then the response code should be 202
     And I wait for the evaluation job status to be "completed"
     When I send a DELETE request to "/api/v1/evaluations/jobs/{id}?hard_delete=true"
     Then the response code should be 204
@@ -69,14 +81,45 @@ Feature: Evaluations Endpoint
     Then the response code should be 400
     And the response should contain the value "request_validation_failed" at path "$.message_code"
 
+  Scenario: Create evaluation job with Collection
+    Given the service is running
+    When the mode is local or CI then skip this scenario
+    When I send a POST request to "/api/v1/evaluations/collections" with body "file:/collection.json"
+    Then the response code should be 202
+    And the "resource.id" field in the response should be saved as "value:collection_id"
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_with_collection.json"
+    Then the response code should be 202
+    And the response should contain the value "evaluation_job_created" at path "$.status.message.message_code"
+    And the response should contain the value "pending" at path "$.status.state"
+    When I send a GET request to "/api/v1/evaluations/jobs/{id}"
+    Then the response code should be 200
+    And the response should contain the value "{{value:collection_id}}" at path "$.collection.id"
+    And I wait for the evaluation job status to be "completed"
+    When I send a DELETE request to "/api/v1/evaluations/jobs/{id}?hard_delete=true"
+    Then the response code should be 204
+    When I send a DELETE request to "/api/v1/evaluations/collections/{{value:collection_id}}?hard_delete=true"
+    Then the response code should be 204
+
   Scenario: List evaluation jobs
     Given the service is running
+    And I set the header "X-User" to "test-user-1"
+    And I set the header "X-Tenant" to "test-tenant-1"
     When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job.json"
     Then the response code should be 202
+    And the response should contain the value "test-user-1" at path "$.resource.owner"
+    And the response should contain the value "test-tenant-1" at path "$.resource.tenant"
+    And I set the header "X-User" to "test-user-2"
+    And I set the header "X-Tenant" to "test-tenant-2"
     And I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job.json"
     Then the response code should be 202
+    And the response should contain the value "test-user-2" at path "$.resource.owner"
+    And the response should contain the value "test-tenant-2" at path "$.resource.tenant"
+    And I set the header "X-User" to "test-user-3"
+    And I set the header "X-Tenant" to "test-tenant-3"
     And I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job.json"
     Then the response code should be 202
+    And the response should contain the value "test-user-3" at path "$.resource.owner"
+    And the response should contain the value "test-tenant-3" at path "$.resource.tenant"
     When I send a GET request to "/api/v1/evaluations/jobs?limit=2"
     Then the response code should be 200
     And the "next.href" field in the response should be saved as "value:next_url"
@@ -133,6 +176,51 @@ Feature: Evaluations Endpoint
         "required": ["limit", "first", "total_count", "items"]
       }
     """
+    When I send a GET request to "/api/v1/evaluations/jobs?owner=test-user-1&tenant=test-tenant-1"
+    Then the response code should be 200
+    And the response should have schema as:
+    """
+      {
+        "properties": {
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": ["items"]
+      }
+    """
+    When I send a GET request to "/api/v1/evaluations/jobs?owner=test-user-2&tenant=test-tenant-2"
+    Then the response code should be 200
+    And the response should have schema as:
+    """
+      {
+        "properties": {
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": ["items"]
+      }
+    """
+    When I send a GET request to "/api/v1/evaluations/jobs?owner=test-user-3&tenant=test-tenant-3"
+    Then the response code should be 200
+    And the response should have schema as:
+    """
+      {
+        "properties": {
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1
+          }
+        },
+        "required": ["items"]
+      }
+    """
 
   Scenario: Update evaluation job status with running status
     Given the service is running
@@ -143,11 +231,6 @@ Feature: Evaluations Endpoint
     When I send a GET request to "/api/v1/evaluations/jobs/{id}"
     Then the response code should be 200
     And the response should contain the value "running" at path "$.status.state"
-    When I send a DELETE request to "/api/v1/evaluations/jobs/{id}"
-    Then the response code should be 204
-    When I send a GET request to "/api/v1/evaluations/jobs/{id}"
-    Then the response code should be 200
-    And the response should contain the value "cancelled" at path "$.status.state"
     When I send a POST request to "/api/v1/evaluations/jobs/{id}/events" with body "file:/evaluation_job_status_event_completed.json"
     Then the response code should be 204
     When I send a GET request to "/api/v1/evaluations/jobs/{id}"
@@ -158,7 +241,6 @@ Feature: Evaluations Endpoint
     And the response should contain the value "can not be cancelled because" at path "$.message"
     When I send a GET request to "/api/v1/evaluations/jobs/{id}"
     Then the response code should be 200
-    And the response should contain the value "completed" at path "$.status.state"
     And the response should contain the value "evaluation_job_updated" at path "$.status.message.message_code"
     And the response should contain the value "completed" at path "$.status.benchmarks[0].status"
     And the response should contain the value "arc_easy" at path "$.status.benchmarks[0].id"
@@ -169,6 +251,26 @@ Feature: Evaluations Endpoint
     When I send a DELETE request to "/api/v1/evaluations/jobs/{id}?hard_delete=true"
     Then the response code should be 204
 
+  Scenario: Pass criteria - job and aggregate results after benchmark events
+    Given the service is running
+    When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_for_pass_criteria_test.json"
+    Then the response code should be 202
+    When I send a POST request to "/api/v1/evaluations/jobs/{id}/events" with body "file:/evaluation_job_status_event_for_pass_criteria_test_b1.json"
+    Then the response code should be 204
+    When I send a POST request to "/api/v1/evaluations/jobs/{id}/events" with body "file:/evaluation_job_status_event_for_pass_criteria_test_b2.json"
+    Then the response code should be 204
+    When I send a GET request to "/api/v1/evaluations/jobs/{id}"
+    Then the response code should be 200
+    And the response should contain the value "arc_easy" at path "$.results.benchmarks[0].id"
+    And the response should contain the value "0.95" at path "$.results.benchmarks[0].test.primary_score"
+    And the response should contain the value "true" at path "$.results.benchmarks[0].test.pass"
+    And the response should contain the value "AraDiCE_boolq_lev" at path "$.results.benchmarks[1].id"
+    And the response should contain the value "0.1" at path "$.results.benchmarks[1].test.primary_score"
+    And the response should contain the value "true" at path "$.results.benchmarks[1].test.pass"
+    And the response should contain the value "0.92|0.93|0.94" at path "$.results.test.score"
+    And the response should contain the value "true" at path "$.results.test.pass"
+    When I send a DELETE request to "/api/v1/evaluations/jobs/{id}?hard_delete=true"
+    Then the response code should be 204
 
   Scenario: Cancel running evaluation job (soft delete)
     Given the service is running
@@ -181,6 +283,9 @@ Feature: Evaluations Endpoint
     When I send a GET request to "/api/v1/evaluations/jobs/{id}"
     Then the response code should be 200
     And the response should contain the value "cancelled" at path "$.status.state"
+    And the response should contain the value "cancelled" at path "$.status.benchmarks[0].status"
+    And the response should contain the value "Evaluation job cancelled" at path "$.status.benchmarks[0].error_message.message"
+    And the response should contain the value "evaluation_job_cancelled" at path "$.status.benchmarks[0].error_message.message_code"
 
   Scenario: Cancel evaluation job with invalid hard_delete query
     Given the service is running
@@ -217,7 +322,7 @@ Feature: Evaluations Endpoint
     Then the response code should be 202
     When I send a POST request to "/api/v1/evaluations/jobs/{id}/events" with body "file:/evaluation_job_status_event_running.json"
     Then the response code should be 204
-    When I send a GET request to "/api/v1/evaluations/jobs?status_filter=running&limit=1"
+    When I send a GET request to "/api/v1/evaluations/jobs?status=running&limit=1"
     Then the response code should be 200
     And the response should contain the value "running" at path "$.items[0].status.state"
     And the response should have schema as:

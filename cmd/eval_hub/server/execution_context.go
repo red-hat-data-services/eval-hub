@@ -1,7 +1,6 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -13,6 +12,12 @@ import (
 	"github.com/eval-hub/eval-hub/internal/logging"
 	"github.com/eval-hub/eval-hub/internal/messages"
 	"github.com/eval-hub/eval-hub/pkg/api"
+)
+
+const (
+	TRANSACTION_ID_HEADER = "X-Global-Transaction-Id"
+	USER_HEADER           = "X-User"
+	TENANT_HEADER         = "X-Tenant"
 )
 
 // newExecutionContext creates a new ExecutionContext with default values. This function
@@ -37,11 +42,19 @@ func (s *Server) newExecutionContext(r *http.Request) *executioncontext.Executio
 	// Enhance logger with request-specific fields
 	requestID, enhancedLogger := s.loggerWithRequest(r)
 
+	user := r.Header.Get(USER_HEADER)
+	tenant := r.Header.Get(TENANT_HEADER)
+
+	// Use r.Context() so OTEL trace context (and the HTTP span from otelhttp) propagates
+	// to handlers and downstream calls (storage, runtime, mlflow). Using context.Background()
+	// would break parent-span linkage and create orphan traces.
 	return executioncontext.NewExecutionContext(
-		context.Background(),
+		r.Context(),
 		requestID,
 		enhancedLogger,
-		3)
+		3,
+		api.User(user),
+		api.Tenant(tenant))
 }
 
 // Abstract request objects to not depend on the underlying HTTP framework.
@@ -122,12 +135,15 @@ func (r RespWrapper) Write(buf []byte) (int, error) {
 
 func (r RespWrapper) WriteJSON(v any, code int) {
 	r.SetHeader("Content-Type", "application/json")
+	if r.ctx.RequestID != "" {
+		r.SetHeader(TRANSACTION_ID_HEADER, r.ctx.RequestID)
+	}
 	r.SetStatusCode(code)
 
 	if v != nil {
 		err := json.NewEncoder(r.Response).Encode(v)
 		if err != nil {
-			logging.LogRequestFailed(r.ctx, code, err.Error())
+			logging.LogRequestFailed(r.ctx, code, err.Error(), 1)
 			return
 		}
 	}
@@ -138,7 +154,7 @@ func (r RespWrapper) SetStatusCode(code int) {
 	r.Response.WriteHeader(code)
 }
 
-func (r RespWrapper) ErrorWithMessageCode(requestId string, messageCode *messages.MessageCode, messageParams ...any) {
+func (r RespWrapper) errorWithMessageCode(requestId string, messageCode *messages.MessageCode, messageParams ...any) {
 	msg := messages.GetErrorMessage(messageCode, messageParams...)
 
 	r.DeleteHeader("Content-Length")
@@ -146,13 +162,17 @@ func (r RespWrapper) ErrorWithMessageCode(requestId string, messageCode *message
 	r.SetHeader("X-Content-Type-Options", "nosniff")
 	r.WriteJSON(api.Error{Message: msg, MessageCode: messageCode.GetCode(), Trace: requestId}, messageCode.GetStatusCode())
 
-	logging.LogRequestFailed(r.ctx, messageCode.GetStatusCode(), msg)
+	logging.LogRequestFailed(r.ctx, messageCode.GetStatusCode(), msg, 2)
+}
+
+func (r RespWrapper) ErrorWithMessageCode(requestId string, messageCode *messages.MessageCode, messageParams ...any) {
+	r.errorWithMessageCode(requestId, messageCode, messageParams...)
 }
 
 func (r RespWrapper) Error(err error, requestId string) {
 	if e, ok := err.(abstractions.ServiceError); ok {
-		r.ErrorWithMessageCode(requestId, e.MessageCode(), e.MessageParams()...)
+		r.errorWithMessageCode(requestId, e.MessageCode(), e.MessageParams()...)
 		return
 	}
-	r.ErrorWithMessageCode(requestId, messages.UnknownError, "Error", err.Error())
+	r.errorWithMessageCode(requestId, messages.UnknownError, "Error", err.Error())
 }
