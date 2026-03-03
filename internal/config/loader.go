@@ -3,24 +3,20 @@ package config
 import (
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 
+	"github.com/eval-hub/eval-hub/auth"
 	"github.com/eval-hub/eval-hub/pkg/api"
 	"github.com/spf13/viper"
 )
 
 var (
-	configLookup = []string{"config/providers", "./config/providers", "../../config/providers", "../../../config/providers"}
-
-	once        = sync.Once{}
-	isLocalMode = false
+	configLookup = []string{"config", "./config", "../../config", "../../../config"}
 )
 
 type EnvMap struct {
@@ -30,15 +26,6 @@ type EnvMap struct {
 type SecretMap struct {
 	Dir      string            `mapstructure:"dir,omitempty"`
 	Mappings map[string]string `mapstructure:"mappings,omitempty"`
-}
-
-func localMode() bool {
-	once.Do(func() {
-		localMode := flag.Bool("local", false, "Server operates in local mode or not.")
-		flag.Parse()
-		isLocalMode = *localMode
-	})
-	return isLocalMode
 }
 
 // readConfig locates and reads a configuration file using Viper. It searches for
@@ -95,17 +82,28 @@ func readConfig(logger *slog.Logger, name string, ext string, dirs ...string) (*
 	return configValues, err
 }
 
-func loadProvider(logger *slog.Logger, file string) (api.ProviderResource, error) {
-	providerConfig := api.ProviderResource{}
-	configValues, err := readConfig(logger, file, "yaml", configLookup...)
+func loadProvider(logger *slog.Logger, file string, dirs ...string) (*api.ProviderResource, error) {
+	type providerConfigInternal struct {
+		ID                 string `mapstructure:"id" yaml:"id" json:"id"`
+		api.ProviderConfig `mapstructure:",squash"`
+	}
+	providerConfig := providerConfigInternal{}
+	configValues, err := readConfig(logger, file, "yaml", dirs...)
 	if err != nil {
-		return providerConfig, err
+		return nil, err
 	}
 
 	if err := configValues.Unmarshal(&providerConfig); err != nil {
-		return providerConfig, err
+		return nil, err
 	}
-	return providerConfig, nil
+	return &api.ProviderResource{
+		Resource: api.Resource{
+			ID:       providerConfig.ID,
+			ReadOnly: true,
+			Owner:    "system",
+		},
+		ProviderConfig: providerConfig.ProviderConfig,
+	}, nil
 }
 
 func scanFolders(logger *slog.Logger, dirs ...string) ([]os.DirEntry, error) {
@@ -127,11 +125,22 @@ func scanFolders(logger *slog.Logger, dirs ...string) ([]os.DirEntry, error) {
 	return []os.DirEntry{}, nil
 }
 
+func hasExplicitConfigDir(dirs []string) bool {
+	return len(dirs) > 0 && dirs[0] != ""
+}
+
 func LoadProviderConfigs(logger *slog.Logger, dirs ...string) (map[string]api.ProviderResource, error) {
-	if len(dirs) == 0 {
-		dirs = configLookup
+	if !hasExplicitConfigDir(dirs) {
+		dirs = []string{}
+		for _, dir := range configLookup {
+			dirs = append(dirs, dir+"/providers")
+		}
+	} else {
+		dirs = []string{dirs[0] + "/providers"}
 	}
+
 	providerConfigs := make(map[string]api.ProviderResource)
+
 	files, err := scanFolders(logger, dirs...)
 	if err != nil {
 		return providerConfigs, err
@@ -141,21 +150,42 @@ func LoadProviderConfigs(logger *slog.Logger, dirs ...string) (map[string]api.Pr
 			continue
 		}
 		name := strings.TrimSuffix(file.Name(), ".yaml")
-		providerConfig, err := loadProvider(logger, name)
+		providerConfig, err := loadProvider(logger, name, dirs...)
 		if err != nil {
 			return nil, err
 		}
 
-		if providerConfig.ID == "" {
+		if providerConfig.Resource.ID == "" {
 			logger.Warn("Provider config missing id, skipping", "file", file.Name())
 			continue
 		}
 
-		providerConfigs[providerConfig.ID] = providerConfig
-		logger.Info("Provider loaded", "provider_id", providerConfig.ID)
+		providerConfigs[providerConfig.Resource.ID] = *providerConfig
+		logger.Info("Provider loaded", "provider_id", providerConfig.Resource.ID)
 	}
 
 	return providerConfigs, nil
+}
+
+func LoadAuthConfig(logger *slog.Logger, dirs ...string) (*auth.AuthConfig, error) {
+	logger.Info("Start reading auth configuration", "dirs", dirs)
+
+	if !hasExplicitConfigDir(dirs) {
+		dirs = configLookup
+	}
+
+	v, err := readConfig(logger, "auth", "yaml", dirs...)
+	if err != nil {
+		logger.Error("Failed to read auth configuration", "error", err.Error())
+		return nil, err
+	}
+
+	var authConfig auth.AuthConfig
+	if err := v.Unmarshal(&authConfig); err != nil {
+		return nil, err
+	}
+
+	return &authConfig, nil
 }
 
 // LoadConfig loads configuration using a two-tier system with Viper. This implements
@@ -194,8 +224,8 @@ func LoadProviderConfigs(logger *slog.Logger, dirs ...string) (map[string]api.Pr
 func LoadConfig(logger *slog.Logger, version string, build string, buildDate string, dirs ...string) (*Config, error) {
 	logger.Info("Start reading configuration", "version", version, "build", build, "build_date", buildDate, "dirs", dirs)
 
-	if len(dirs) == 0 {
-		dirs = []string{"config", "./config", "../../config", "tests"} // tests is for running the service on a local machine (not local mode)
+	if !hasExplicitConfigDir(dirs) {
+		dirs = configLookup
 	}
 
 	configValues, err := readConfig(logger, "config", "yaml", dirs...)
@@ -265,7 +295,6 @@ func LoadConfig(logger *slog.Logger, version string, build string, buildDate str
 	conf.Service.Version = version
 	conf.Service.Build = build
 	conf.Service.BuildDate = buildDate
-	conf.Service.LocalMode = localMode()
 
 	logger.Info("End reading configuration", "config", RedactedJSON(conf, redactedFields))
 	return &conf, nil

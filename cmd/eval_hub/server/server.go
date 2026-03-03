@@ -7,14 +7,17 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/eval-hub/eval-hub/auth"
 	"github.com/eval-hub/eval-hub/internal/abstractions"
 	"github.com/eval-hub/eval-hub/internal/config"
 	"github.com/eval-hub/eval-hub/internal/constants"
 	"github.com/eval-hub/eval-hub/internal/handlers"
 	"github.com/eval-hub/eval-hub/internal/messages"
+	"github.com/eval-hub/eval-hub/internal/runtimes/k8s"
 	"github.com/eval-hub/eval-hub/pkg/api"
 	"github.com/eval-hub/eval-hub/pkg/mlflowclient"
 	"github.com/go-playground/validator/v10"
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
 	"github.com/google/uuid"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -26,10 +29,15 @@ type Server struct {
 	logger          *slog.Logger
 	serviceConfig   *config.Config
 	providerConfigs map[string]api.ProviderResource
+	authConfig      *auth.AuthConfig
 	storage         abstractions.Storage
 	validate        *validator.Validate
 	runtime         abstractions.Runtime
 	mlflowClient    *mlflowclient.Client
+}
+
+func (s *Server) isOTELEnabled() bool {
+	return (s.serviceConfig != nil) && s.serviceConfig.IsOTELEnabled()
 }
 
 // NewServer creates a new HTTP server instance with the provided logger and configuration.
@@ -54,6 +62,7 @@ type Server struct {
 func NewServer(logger *slog.Logger,
 	serviceConfig *config.Config,
 	providerConfigs map[string]api.ProviderResource,
+	authConfig *auth.AuthConfig,
 	storage abstractions.Storage,
 	validate *validator.Validate,
 	runtime abstractions.Runtime,
@@ -78,6 +87,7 @@ func NewServer(logger *slog.Logger,
 		logger:          logger,
 		serviceConfig:   serviceConfig,
 		providerConfigs: providerConfigs,
+		authConfig:      authConfig,
 		storage:         storage,
 		validate:        validate,
 		runtime:         runtime,
@@ -112,7 +122,7 @@ func (s *Server) GetPort() int {
 // Returns:
 //   - *slog.Logger: A new logger instance with request-specific fields attached
 func (s *Server) loggerWithRequest(r *http.Request) (string, *slog.Logger) {
-	requestID := r.Header.Get("X-Global-Transaction-Id")
+	requestID := r.Header.Get(TRANSACTION_ID_HEADER)
 	if requestID == "" {
 		requestID = uuid.New().String() // generate a UUID if not present
 	}
@@ -167,12 +177,25 @@ func (s *Server) loggerWithRequest(r *http.Request) (string, *slog.Logger) {
 	return requestID, enhancedLogger
 }
 
-func (s *Server) setupRoutes() (http.Handler, error) {
-	router := http.NewServeMux()
-	h := handlers.New(s.storage, s.validate, s.runtime, s.mlflowClient, s.providerConfigs, s.serviceConfig)
+func (s *Server) handleFunc(router *http.ServeMux, pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	s.handle(router, pattern, http.HandlerFunc(handler))
+}
 
-	// Health and status endpoints
-	router.HandleFunc("/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
+func spanNameFormatter(operation string, r *http.Request) string {
+	return fmt.Sprintf("%s %s", r.Method, operation)
+}
+
+func (s *Server) handle(router *http.ServeMux, pattern string, handler http.Handler) {
+	if s.isOTELEnabled() {
+		handler = otelhttp.NewHandler(handler, pattern, otelhttp.WithSpanNameFormatter(spanNameFormatter))
+		s.logger.Info("Enabled OTEL handler", "pattern", pattern)
+	}
+	router.Handle(pattern, handler)
+	s.logger.Info("Registered API", "pattern", pattern)
+}
+
+func (s *Server) setupHealthRoutes(h *handlers.Handlers, router *http.ServeMux) {
+	s.handleFunc(router, "/api/v1/health", func(w http.ResponseWriter, r *http.Request) {
 		ctx := s.newExecutionContext(r)
 		resp := NewRespWrapper(w, ctx)
 		req := NewRequestWrapper(r)
@@ -182,11 +205,11 @@ func (s *Server) setupRoutes() (http.Handler, error) {
 		default:
 			resp.ErrorWithMessageCode(ctx.RequestID, messages.MethodNotAllowed, "Method", req.Method(), "Api", req.URI())
 		}
-
 	})
+}
 
-	// Evaluation jobs endpoints
-	router.HandleFunc("/api/v1/evaluations/jobs", func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) setupEvaluationJobsRoutes(h *handlers.Handlers, router *http.ServeMux) {
+	s.handleFunc(router, "/api/v1/evaluations/jobs", func(w http.ResponseWriter, r *http.Request) {
 		ctx := s.newExecutionContext(r)
 		resp := NewRespWrapper(w, ctx)
 		req := &ReqWrapper{Request: r}
@@ -199,9 +222,10 @@ func (s *Server) setupRoutes() (http.Handler, error) {
 			resp.ErrorWithMessageCode(ctx.RequestID, messages.MethodNotAllowed, "Method", req.Method(), "Api", req.URI())
 		}
 	})
+}
 
-	// Handle events endpoint
-	router.HandleFunc(fmt.Sprintf("/api/v1/evaluations/jobs/{%s}/events", constants.PATH_PARAMETER_JOB_ID), func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) setupEvaluationJobEventsRoutes(h *handlers.Handlers, router *http.ServeMux) {
+	s.handleFunc(router, fmt.Sprintf("/api/v1/evaluations/jobs/{%s}/events", constants.PATH_PARAMETER_JOB_ID), func(w http.ResponseWriter, r *http.Request) {
 		ctx := s.newExecutionContext(r)
 		resp := NewRespWrapper(w, ctx)
 		req := NewRequestWrapper(r)
@@ -212,9 +236,10 @@ func (s *Server) setupRoutes() (http.Handler, error) {
 			resp.ErrorWithMessageCode(ctx.RequestID, messages.MethodNotAllowed, "Method", req.Method(), "Api", req.URI())
 		}
 	})
+}
 
-	// Handle individual job endpoints
-	router.HandleFunc(fmt.Sprintf("/api/v1/evaluations/jobs/{%s}", constants.PATH_PARAMETER_JOB_ID), func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) setupEvaluationJobRoutes(h *handlers.Handlers, router *http.ServeMux) {
+	s.handleFunc(router, fmt.Sprintf("/api/v1/evaluations/jobs/{%s}", constants.PATH_PARAMETER_JOB_ID), func(w http.ResponseWriter, r *http.Request) {
 		ctx := s.newExecutionContext(r)
 		resp := NewRespWrapper(w, ctx)
 		req := NewRequestWrapper(r)
@@ -227,68 +252,82 @@ func (s *Server) setupRoutes() (http.Handler, error) {
 			resp.ErrorWithMessageCode(ctx.RequestID, messages.MethodNotAllowed, "Method", req.Method(), "Api", req.URI())
 		}
 	})
+}
 
-	// Benchmarks endpoint
-	router.HandleFunc("/api/v1/evaluations/benchmarks", func(w http.ResponseWriter, r *http.Request) {
-		ctx := s.newExecutionContext(r)
-		resp := NewRespWrapper(w, ctx)
-		req := NewRequestWrapper(r)
-		switch r.Method {
-		case http.MethodGet:
-			h.HandleListBenchmarks(ctx, req, resp)
-		default:
-			resp.ErrorWithMessageCode(ctx.RequestID, messages.MethodNotAllowed, "Method", req.Method(), "Api", req.URI())
-		}
-	})
-
-	// Collections endpoints
-	router.HandleFunc("/api/v1/evaluations/collections", func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) setupCollectionsRoutes(h *handlers.Handlers, router *http.ServeMux) {
+	s.handleFunc(router, "/api/v1/evaluations/collections", func(w http.ResponseWriter, r *http.Request) {
 		ctx := s.newExecutionContext(r)
 		resp := NewRespWrapper(w, ctx)
 		req := NewRequestWrapper(r)
 		switch r.Method {
 		case http.MethodPost:
-			h.HandleCreateCollection(ctx, resp)
+			h.HandleCreateCollection(ctx, req, resp)
 		case http.MethodGet:
-			h.HandleListCollections(ctx, resp)
+			h.HandleListCollections(ctx, req, resp)
 		default:
 			resp.ErrorWithMessageCode(ctx.RequestID, messages.MethodNotAllowed, "Method", req.Method(), "Api", req.URI())
 		}
 	})
+}
 
-	router.HandleFunc(fmt.Sprintf("/api/v1/evaluations/collections/{%s}", constants.PATH_PARAMETER_COLLECTION_ID), func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) setupCollectionRoutes(h *handlers.Handlers, router *http.ServeMux) {
+	s.handleFunc(router, fmt.Sprintf("/api/v1/evaluations/collections/{%s}", constants.PATH_PARAMETER_COLLECTION_ID), func(w http.ResponseWriter, r *http.Request) {
 		ctx := s.newExecutionContext(r)
 		resp := NewRespWrapper(w, ctx)
 		req := NewRequestWrapper(r)
 		switch r.Method {
 		case http.MethodGet:
-			h.HandleGetCollection(ctx, resp)
+			h.HandleGetCollection(ctx, req, resp)
 		case http.MethodPut:
-			h.HandleUpdateCollection(ctx, resp)
+			h.HandleUpdateCollection(ctx, req, resp)
 		case http.MethodPatch:
-			h.HandlePatchCollection(ctx, resp)
+			h.HandlePatchCollection(ctx, req, resp)
 		case http.MethodDelete:
-			h.HandleDeleteCollection(ctx, resp)
+			h.HandleDeleteCollection(ctx, req, resp)
 		default:
 			resp.ErrorWithMessageCode(ctx.RequestID, messages.MethodNotAllowed, "Method", req.Method(), "Api", req.URI())
 		}
 	})
+}
 
-	// Providers endpoints
-	router.HandleFunc("/api/v1/evaluations/providers", func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) setupProvidersRoutes(h *handlers.Handlers, router *http.ServeMux) {
+	s.handleFunc(router, "/api/v1/evaluations/providers", func(w http.ResponseWriter, r *http.Request) {
 		ctx := s.newExecutionContext(r)
 		resp := NewRespWrapper(w, ctx)
 		req := NewRequestWrapper(r)
 		switch r.Method {
 		case http.MethodGet:
 			h.HandleListProviders(ctx, req, resp)
+		case http.MethodPost:
+			h.HandleCreateProvider(ctx, req, resp)
 		default:
 			resp.ErrorWithMessageCode(ctx.RequestID, messages.MethodNotAllowed, "Method", req.Method(), "Api", req.URI())
 		}
 	})
+}
 
-	// OpenAPI documentation endpoints
-	router.HandleFunc("/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) setupProviderRoutes(h *handlers.Handlers, router *http.ServeMux) {
+	s.handleFunc(router, fmt.Sprintf("/api/v1/evaluations/providers/{%s}", constants.PATH_PARAMETER_PROVIDER_ID), func(w http.ResponseWriter, r *http.Request) {
+		ctx := s.newExecutionContext(r)
+		resp := NewRespWrapper(w, ctx)
+		req := NewRequestWrapper(r)
+		switch r.Method {
+		case http.MethodGet:
+			h.HandleGetProvider(ctx, req, resp)
+		case http.MethodPut:
+			h.HandleUpdateProvider(ctx, req, resp)
+		case http.MethodPatch:
+			h.HandlePatchProvider(ctx, req, resp)
+		case http.MethodDelete:
+			h.HandleDeleteProvider(ctx, req, resp)
+		default:
+			resp.ErrorWithMessageCode(ctx.RequestID, messages.MethodNotAllowed, "Method", req.Method(), "Api", req.URI())
+		}
+	})
+}
+
+func (s *Server) setupOpenAPIRoutes(h *handlers.Handlers, router *http.ServeMux) {
+	s.handleFunc(router, "/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
 		ctx := s.newExecutionContext(r)
 		resp := NewRespWrapper(w, ctx)
 		req := NewRequestWrapper(r)
@@ -299,8 +338,10 @@ func (s *Server) setupRoutes() (http.Handler, error) {
 			resp.ErrorWithMessageCode(ctx.RequestID, messages.MethodNotAllowed, "Method", req.Method(), "Api", req.URI())
 		}
 	})
+}
 
-	router.HandleFunc("/docs", func(w http.ResponseWriter, r *http.Request) {
+func (s *Server) setupDocsRoutes(h *handlers.Handlers, router *http.ServeMux) {
+	s.handleFunc(router, "/docs", func(w http.ResponseWriter, r *http.Request) {
 		ctx := s.newExecutionContext(r)
 		resp := NewRespWrapper(w, ctx)
 		req := NewRequestWrapper(r)
@@ -310,10 +351,41 @@ func (s *Server) setupRoutes() (http.Handler, error) {
 		default:
 			resp.ErrorWithMessageCode(ctx.RequestID, messages.MethodNotAllowed, "Method", req.Method(), "Api", req.URI())
 		}
+
 	})
+}
+
+func (s *Server) setupRoutes() (http.Handler, error) {
+	router := http.NewServeMux()
+	h := handlers.New(s.storage, s.validate, s.runtime, s.mlflowClient, s.providerConfigs, s.serviceConfig)
+
+	// Health
+	s.setupHealthRoutes(h, router)
+
+	// Evaluation jobs endpoints
+	s.setupEvaluationJobsRoutes(h, router)
+	s.setupEvaluationJobEventsRoutes(h, router)
+	s.setupEvaluationJobRoutes(h, router)
+
+	// Collections endpoints
+	s.setupCollectionsRoutes(h, router)
+	s.setupCollectionRoutes(h, router)
+
+	// Providers endpoints
+	s.setupProvidersRoutes(h, router)
+	s.setupProviderRoutes(h, router)
+
+	// OpenAPI documentation endpoints
+	s.setupOpenAPIRoutes(h, router)
+
+	s.setupDocsRoutes(h, router)
 
 	// Prometheus metrics endpoint
-	router.Handle("/metrics", promhttp.Handler())
+	prometheusEnabled := s.serviceConfig.IsPrometheusEnabled()
+	if prometheusEnabled {
+		router.Handle("/metrics", promhttp.Handler())
+		s.logger.Info("Registered API", "pattern", "/metrics")
+	}
 
 	// Enable CORS in local mode only (for development/testing)
 	handler := http.Handler(router)
@@ -322,8 +394,32 @@ func (s *Server) setupRoutes() (http.Handler, error) {
 	}
 
 	// Wrap with metrics middleware (outermost for complete observability)
-	handler = Middleware(handler)
+	handler = Middleware(handler, prometheusEnabled, s.logger)
+	handler, err := s.setupAuth(handler)
+	if err != nil {
+		return nil, err
+	}
+	return handler, nil
+}
 
+func (s *Server) setupAuth(handler http.Handler) (http.Handler, error) {
+	if !s.serviceConfig.Service.LocalMode && !s.serviceConfig.Service.DisableAuth {
+		client, err := k8s.NewKubernetesClient()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+		}
+		if s.authConfig == nil {
+			return nil, fmt.Errorf("auth.yaml config is required")
+		}
+		handler, err = WithAuthorization(handler, s.logger, client, s.authConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create authorization handler: %w", err)
+		}
+		handler, err = WithAuthentication(handler, s.logger, client, s.authConfig)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create authentication handler: %w", err)
+		}
+	}
 	return handler, nil
 }
 

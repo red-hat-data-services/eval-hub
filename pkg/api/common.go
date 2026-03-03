@@ -17,6 +17,7 @@ type PatchOp string
 
 // The tenant that provides scoping for objects stored in the database but not limited to the database.
 type Tenant string
+type User string
 
 const (
 	PatchOpReplace PatchOp = "replace"
@@ -51,15 +52,17 @@ type Patch []PatchOperation
 
 // Resource represents base resource fields
 type Resource struct {
-	ID        string    `json:"id"`
-	Tenant    Tenant    `json:"tenant"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string     `json:"id"`
+	Tenant    *Tenant    `json:"tenant,omitempty"`
+	CreatedAt *time.Time `json:"created_at,omitempty"`
+	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	ReadOnly  bool       `json:"read_only,omitempty"`
+	Owner     User       `json:"owner,omitempty"`
 }
 
 // Page represents generic pagination schema
 type Page struct {
-	First      *HRef `json:"first"`
+	First      *HRef `json:"first,omitempty"`
 	Next       *HRef `json:"next,omitempty"`
 	Limit      int   `json:"limit"`
 	TotalCount int   `json:"total_count"`

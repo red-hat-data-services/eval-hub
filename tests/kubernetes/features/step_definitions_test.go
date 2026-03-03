@@ -213,6 +213,10 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	tc := newTestContext()
 
 	ctx.Before(func(ctx context.Context, sc *godog.Scenario) (context.Context, error) {
+		if missing := missingRequiredEnvVars(); len(missing) > 0 {
+			fmt.Printf("Skipping Kubernetes scenario; missing env vars: %s\n", strings.Join(missing, ", "))
+			return ctx, godog.ErrSkip
+		}
 		tc.reset()
 		return ctx, nil
 	})
@@ -578,6 +582,8 @@ func (tc *testContext) theResponseCodeShouldBe(code int) error {
 func (tc *testContext) configMapShouldBeCreatedWithNamePattern(pattern string) error {
 	// Convert pattern to regex
 	regexPattern := strings.ReplaceAll(pattern, "{id}", ".*")
+	regexPattern = strings.ReplaceAll(regexPattern, "{guid}", ".*")
+	regexPattern = strings.ReplaceAll(regexPattern, "{resource_guid}", ".*")
 	regexPattern = strings.ReplaceAll(regexPattern, "{benchmark_id}", ".*")
 	regexPattern = strings.ReplaceAll(regexPattern, "{provider_id}", ".*")
 	regexPattern = strings.ReplaceAll(regexPattern, "{hash}", ".*")
@@ -1071,6 +1077,8 @@ func (tc *testContext) configMapDataShouldContainFieldAsArray(dataKey, field str
 func (tc *testContext) jobShouldBeCreatedWithNamePattern(pattern string) error {
 	// Convert pattern to regex
 	regexPattern := strings.ReplaceAll(pattern, "{id}", ".*")
+	regexPattern = strings.ReplaceAll(regexPattern, "{guid}", ".*")
+	regexPattern = strings.ReplaceAll(regexPattern, "{resource_guid}", ".*")
 	regexPattern = strings.ReplaceAll(regexPattern, "{benchmark_id}", ".*")
 	regexPattern = strings.ReplaceAll(regexPattern, "{provider_id}", ".*")
 	regexPattern = strings.ReplaceAll(regexPattern, "{hash}", ".*")

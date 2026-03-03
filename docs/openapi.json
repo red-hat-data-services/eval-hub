@@ -29,10 +29,6 @@
       "description": "Evaluation job management endpoints"
     },
     {
-      "name": "Benchmarks",
-      "description": "Benchmark management endpoints"
-    },
-    {
       "name": "Providers",
       "description": "Evaluation provider endpoints"
     },
@@ -46,7 +42,7 @@
       "get": {
         "summary": "Health Check",
         "description": "Health check endpoint.",
-        "operationId": "health_check_api_v1_health_get",
+        "operationId": "get_health",
         "tags": [
           "Health"
         ],
@@ -83,7 +79,7 @@
         ],
         "summary": "Create Evaluation",
         "description": "Create and execute evaluation request using the simplified benchmark schema.",
-        "operationId": "create_evaluation_api_v1_evaluations_jobs_post",
+        "operationId": "post_evaluations_jobs",
         "requestBody": {
           "required": true,
           "content": {
@@ -125,7 +121,7 @@
         ],
         "summary": "List Evaluations",
         "description": "List all evaluation requests.",
-        "operationId": "list_evaluations_api_v1_evaluations_jobs_get",
+        "operationId": "get_evaluations_jobs",
         "parameters": [
           {
             "name": "limit",
@@ -155,7 +151,7 @@
             "description": "Offset for pagination"
           },
           {
-            "name": "status_filter",
+            "name": "status",
             "in": "query",
             "required": false,
             "schema": {
@@ -164,6 +160,26 @@
               "title": "Status Filter"
             },
             "description": "Filter by status"
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            },
+            "description": "Name to search for"
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Tags"
+            },
+            "description": "Tags to search for"
           }
         ],
         "responses": {
@@ -197,9 +213,9 @@
         "tags": [
           "Evaluations"
         ],
-        "summary": "Get Evaluation Status",
-        "description": "Get the status of an evaluation request.",
-        "operationId": "get_evaluation_status_api_v1_evaluations_jobs__id__get",
+        "summary": "Get Evaluation",
+        "description": "Returns the evaluation job resource with the current status and results.",
+        "operationId": "get_evaluations_jobs_id",
         "parameters": [
           {
             "name": "id",
@@ -242,7 +258,7 @@
         ],
         "summary": "Cancel Evaluation",
         "description": "Cancel a running evaluation.",
-        "operationId": "cancel_evaluation_api_v1_evaluations_jobs__id__delete",
+        "operationId": "delete_evaluations_jobs_id",
         "parameters": [
           {
             "name": "id",
@@ -294,18 +310,34 @@
         ],
         "summary": "List Providers",
         "description": "List all registered evaluation providers.",
-        "operationId": "list_providers_api_v1_evaluations_providers_get",
+        "operationId": "list_providers",
         "parameters": [
           {
-            "name": "id",
+            "name": "limit",
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "description": "Filter by provider ID",
-              "title": "Provider Id"
+              "type": "integer",
+              "maximum": 100,
+              "minimum": 1,
+              "description": "Maximum number of providers to return",
+              "default": 50,
+              "title": "Limit"
             },
-            "description": "Filter by provider ID"
+            "description": "Maximum number of providers to return"
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Offset for pagination",
+              "default": 0,
+              "title": "Offset"
+            },
+            "description": "Offset for pagination"
           },
           {
             "name": "benchmarks",
@@ -318,6 +350,37 @@
               "title": "Benchmarks"
             },
             "description": "Include or exclude benchmarks supported by this provider in the response"
+          },
+          {
+            "name": "name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            },
+            "description": "Name to search for"
+          },
+          {
+            "name": "tags",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "title": "Tags"
+            },
+            "description": "Tags to search for"
+          },
+          {
+            "name": "system_defined",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": true,
+              "title": "System defined providers"
+            },
+            "description": "Set to false to exclude system defined providers"
           }
         ],
         "responses": {
@@ -344,60 +407,69 @@
             "$ref": "#/components/responses/NotFound"
           }
         }
+      },
+      "post": {
+        "tags": [
+          "Providers"
+        ],
+        "summary": "Create a new provider scoped to the current tenant (Bring Your Own Provider)",
+        "description": "Create a new provider scoped to the current tenant (Bring Your Own Provider)",
+        "operationId": "post_providers",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderConfig"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderResource"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
       }
     },
-    "/api/v1/evaluations/benchmarks": {
+    "/api/v1/evaluations/providers/{id}": {
       "get": {
         "tags": [
-          "Benchmarks"
+          "Providers"
         ],
-        "summary": "List All Benchmarks",
-        "description": "List all available benchmarks across providers (similar to Llama Stack format).",
-        "operationId": "list_all_benchmarks_api_v1_evaluations_benchmarks_get",
+        "summary": "Get Provider",
+        "description": "Get a provider by ID.",
+        "operationId": "get_providers_id",
         "parameters": [
           {
-            "name": "provider_id",
-            "in": "query",
-            "required": false,
+            "name": "id",
+            "in": "path",
+            "required": true,
             "schema": {
               "type": "string",
-              "description": "Filter by provider ID",
+              "description": "Provider ID",
               "title": "Provider Id"
             },
-            "description": "Filter by provider ID"
-          },
-          {
-            "name": "id",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "description": "Filter by benchmark ID",
-              "title": "Benchmark Id"
-            },
-            "description": "Filter by benchmark ID"
-          },
-          {
-            "name": "category",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "description": "Filter by benchmark category",
-              "title": "Category"
-            },
-            "description": "Filter by benchmark category"
-          },
-          {
-            "name": "tags",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "description": "Filter by tags (comma-separated)",
-              "title": "Tags"
-            },
-            "description": "Filter by tags (comma-separated)"
+            "description": "Provider ID"
           }
         ],
         "responses": {
@@ -406,10 +478,161 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BenchmarkResourceList"
+                  "$ref": "#/components/schemas/ProviderResource"
                 }
               }
             }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Providers"
+        ],
+        "summary": "Update Provider",
+        "description": "Update an existing provider.",
+        "operationId": "put_providers_id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Provider ID",
+              "title": "Provider Id"
+            },
+            "description": "Provider ID"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProviderConfig"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderResource"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "patch": {
+        "tags": [
+          "Providers"
+        ],
+        "summary": "Patch Provider",
+        "description": "Partially update an existing provider.",
+        "operationId": "patch_providers_id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "array",
+                "title": "Json Patch",
+                "description": "JSON Patch operation",
+                "items": {
+                  "$ref": "#/components/schemas/PatchOperation"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderResource"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Providers"
+        ],
+        "summary": "Delete Provider",
+        "description": "Delete provider by ID.",
+        "operationId": "delete_providers_id",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "Provider ID",
+              "title": "Provider Id"
+            },
+            "description": "Provider ID"
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
           },
           "400": {
             "$ref": "#/components/responses/BadRequest"
@@ -539,20 +762,14 @@
             "type": "string",
             "format": "date-time",
             "description": "Last update timestamp"
-          }
-        }
-      },
-      "MessageInfo": {
-        "type": "object",
-        "description": "Message from a downstream service",
-        "properties": {
-          "message": {
-            "type": "string",
-            "description": "Human-readable message"
           },
-          "message_code": {
+          "read_only": {
+            "type": "boolean",
+            "description": "Whether the resource is read-only"
+          },
+          "owner": {
             "type": "string",
-            "description": "Machine-readable code"
+            "description": "Owner of the resource"
           }
         }
       },
@@ -569,10 +786,6 @@
               "mlflow_experiment_id": {
                 "type": "string",
                 "description": "MLFlow experiment ID"
-              },
-              "message": {
-                "$ref": "#/components/schemas/MessageInfo",
-                "description": "Status or error message"
               }
             }
           }
@@ -589,6 +802,20 @@
           "partially_failed"
         ],
         "description": "Overall evaluation job state"
+      },
+      "MessageInfo": {
+        "type": "object",
+        "description": "Message from a downstream service",
+        "properties": {
+          "message": {
+            "type": "string",
+            "description": "Human-readable message"
+          },
+          "message_code": {
+            "type": "string",
+            "description": "Machine-readable code"
+          }
+        }
       },
       "EvaluationJobState": {
         "type": "object",
@@ -629,6 +856,10 @@
             "type": "string",
             "description": "Benchmark ID"
           },
+          "benchmark_index": {
+            "type": "integer",
+            "description": "Benchmark index in the evaluation job request"
+          },
           "status": {
             "$ref": "#/components/schemas/State"
           },
@@ -668,6 +899,26 @@
           }
         ]
       },
+      "BenchmarkTest": {
+        "type": "object",
+        "description": "The test result of a single benchmark run",
+        "properties": {
+          "primary_score": {
+            "type": "number",
+            "format": "float",
+            "description": "Primary score value"
+          },
+          "threshold": {
+            "type": "number",
+            "format": "float",
+            "description": "Threshold value"
+          },
+          "pass": {
+            "type": "boolean",
+            "description": "Whether the benchmark passed"
+          }
+        }
+      },
       "BenchmarkResult": {
         "type": "object",
         "description": "Result of a single benchmark run",
@@ -679,6 +930,10 @@
           "provider_id": {
             "type": "string",
             "description": "Provider ID"
+          },
+          "benchmark_index": {
+            "type": "integer",
+            "description": "Benchmark index in the evaluation job request"
           },
           "metrics": {
             "type": "object",
@@ -697,6 +952,30 @@
           "logs_path": {
             "type": "string",
             "description": "Path to logs"
+          },
+          "test": {
+            "$ref": "#/components/schemas/BenchmarkTest",
+            "description": "Test result"
+          }
+        }
+      },
+      "EvaluationTest": {
+        "type": "object",
+        "description": "The test result for an evaluation",
+        "properties": {
+          "score": {
+            "type": "number",
+            "format": "float",
+            "description": "Evaluation score value"
+          },
+          "threshold": {
+            "type": "number",
+            "format": "float",
+            "description": "Threshold value"
+          },
+          "pass": {
+            "type": "boolean",
+            "description": "Whether the entire evaluation passed"
           }
         }
       },
@@ -714,6 +993,20 @@
           "mlflow_experiment_url": {
             "type": "string",
             "description": "URL to MLFlow experiment"
+          },
+          "test": {
+            "$ref": "#/components/schemas/EvaluationTest",
+            "description": "Test result"
+          }
+        }
+      },
+      "ModelAuth": {
+        "type": "object",
+        "description": "The model authentication configuration",
+        "properties": {
+          "secret_ref": {
+            "type": "string",
+            "description": "The reference to the secret containing the model authentication credentials"
           }
         }
       },
@@ -732,6 +1025,15 @@
           "name": {
             "type": "string",
             "description": "Model name"
+          },
+          "parameters": {
+            "type": "object",
+            "additionalProperties": true,
+            "description": "Model specific parameters"
+          },
+          "auth": {
+            "$ref": "#/components/schemas/ModelAuth",
+            "description": "The model authentication configuration"
           }
         }
       },
@@ -775,6 +1077,41 @@
           }
         }
       },
+      "TestDataRefS3": {
+        "type": "object",
+        "description": "S3 test data reference",
+        "required": [
+          "bucket",
+          "key",
+          "secret_ref"
+        ],
+        "properties": {
+          "bucket": {
+            "type": "string",
+            "description": "S3 bucket name"
+          },
+          "key": {
+            "type": "string",
+            "description": "S3 object key (path)"
+          },
+          "secret_ref": {
+            "type": "string",
+            "description": "Kubernetes Secret name containing S3 credentials"
+          }
+        }
+      },
+      "TestDataRef": {
+        "type": "object",
+        "description": "Reference to external test data sources",
+        "required": [
+          "s3"
+        ],
+        "properties": {
+          "s3": {
+            "$ref": "#/components/schemas/TestDataRefS3"
+          }
+        }
+      },
       "BenchmarkConfig": {
         "type": "object",
         "description": "Reference to a benchmark in a collection or evaluation",
@@ -808,7 +1145,11 @@
               "parameters": {
                 "type": "object",
                 "additionalProperties": true,
-                "description": "Benchmark-specific parameters"
+                "description": "Benchmark specific parameters"
+              },
+              "test_data_ref": {
+                "$ref": "#/components/schemas/TestDataRef",
+                "description": "Reference to the test data source for this benchmark"
               }
             }
           }
@@ -951,6 +1292,21 @@
           "benchmarks"
         ],
         "properties": {
+          "name": {
+            "type": "string",
+            "description": "Evaluation job name"
+          },
+          "description": {
+            "type": "string",
+            "description": "Evaluation job description"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Evaluation job tags"
+          },
           "model": {
             "$ref": "#/components/schemas/ModelRef",
             "description": "Model to evaluate"
@@ -1040,6 +1396,102 @@
           }
         ]
       },
+      "EnvVar": {
+        "type": "object",
+        "description": "Environment variable for job configuration",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Environment variable name"
+          },
+          "value": {
+            "type": "string",
+            "description": "Environment variable value"
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ]
+      },
+      "K8sRuntime": {
+        "type": "object",
+        "description": "Kubernetes runtime configuration for provider evaluation jobs",
+        "properties": {
+          "image": {
+            "type": "string",
+            "description": "Container image for the evaluation job (e.g. quay.io/evalhub/adapter:latest)"
+          },
+          "entrypoint": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Container entrypoint command"
+          },
+          "cpu_request": {
+            "type": "string",
+            "description": "CPU request (e.g. 250m)"
+          },
+          "memory_request": {
+            "type": "string",
+            "description": "Memory request (e.g. 512Mi)"
+          },
+          "cpu_limit": {
+            "type": "string",
+            "description": "CPU limit (e.g. 1)"
+          },
+          "memory_limit": {
+            "type": "string",
+            "description": "Memory limit (e.g. 2Gi)"
+          },
+          "env": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvVar"
+            },
+            "description": "Environment variables for the job"
+          }
+        },
+        "required": [
+          "image",
+          "entrypoint"
+        ]
+      },
+      "LocalRuntime": {
+        "type": "object",
+        "description": "Local runtime configuration for running evaluations on the host",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Command to execute for local evaluation runs"
+          },
+          "env": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EnvVar"
+            },
+            "description": "Environment variables for the local process"
+          }
+        },
+        "required": [
+          "command"
+        ]
+      },
+      "Runtime": {
+        "type": "object",
+        "description": "Provider runtime configuration",
+        "properties": {
+          "k8s": {
+            "$ref": "#/components/schemas/K8sRuntime",
+            "description": "Kubernetes runtime configuration"
+          },
+          "local": {
+            "$ref": "#/components/schemas/LocalRuntime",
+            "description": "Local runtime configuration"
+          }
+        }
+      },
       "BenchmarkResource": {
         "type": "object",
         "description": "Benchmark specification (from a provider)",
@@ -1047,10 +1499,6 @@
           "id": {
             "type": "string",
             "description": "Benchmark ID"
-          },
-          "provider_id": {
-            "type": "string",
-            "description": "Provider ID"
           },
           "name": {
             "type": "string",
@@ -1085,28 +1533,41 @@
               "type": "string"
             },
             "description": "Tags"
+          },
+          "primary_score": {
+            "$ref": "#/components/schemas/PrimaryScore"
+          },
+          "pass_criteria": {
+            "$ref": "#/components/schemas/PassCriteria"
           }
         }
       },
-      "ProviderResource": {
+      "ProviderConfig": {
         "type": "object",
         "description": "Evaluation provider (configuration and available benchmarks)",
         "properties": {
-          "id": {
-            "type": "string",
-            "description": "Provider ID"
-          },
           "name": {
             "type": "string",
             "description": "Provider name"
+          },
+          "title": {
+            "type": "string",
+            "description": "Provider display title"
           },
           "description": {
             "type": "string",
             "description": "Provider description"
           },
-          "type": {
-            "type": "string",
-            "description": "Provider type"
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Provider tags"
+          },
+          "runtime": {
+            "$ref": "#/components/schemas/Runtime",
+            "description": "Provider runtime configuration"
           },
           "benchmarks": {
             "type": "array",
@@ -1115,7 +1576,30 @@
             },
             "description": "Benchmarks offered by this provider"
           }
-        }
+        },
+        "required": [
+          "name",
+          "benchmarks",
+          "runtime"
+        ]
+      },
+      "ProviderResource": {
+        "type": "object",
+        "description": "Provider resource",
+        "allOf": [
+          {
+            "type": "object",
+            "properties": {
+              "resource": {
+                "$ref": "#/components/schemas/Resource",
+                "description": "Resource metadata"
+              }
+            }
+          },
+          {
+            "$ref": "#/components/schemas/ProviderConfig"
+          }
+        ]
       },
       "ProviderResourceList": {
         "type": "object",
@@ -1134,22 +1618,34 @@
           }
         }
       },
-      "BenchmarkResourceList": {
+      "PatchOp": {
+        "type": "string",
+        "enum": [
+          "replace",
+          "add",
+          "remove"
+        ],
+        "description": "Patch operation type"
+      },
+      "PatchOperation": {
         "type": "object",
-        "description": "List of benchmarks",
+        "description": "Single JSON patch operation",
         "properties": {
-          "total_count": {
-            "type": "integer",
-            "description": "Total number of benchmarks"
+          "op": {
+            "$ref": "#/components/schemas/PatchOp"
           },
-          "items": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/BenchmarkResource"
-            },
-            "description": "Benchmark resources"
+          "path": {
+            "type": "string",
+            "description": "JSON Pointer path"
+          },
+          "value": {
+            "description": "Value for add/replace (omit for remove)"
           }
-        }
+        },
+        "required": [
+          "op",
+          "path"
+        ]
       }
     },
     "examples": {
