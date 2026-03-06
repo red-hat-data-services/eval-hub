@@ -3,11 +3,12 @@ package sql
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"slices"
-	"time"
 
 	"github.com/eval-hub/eval-hub/internal/abstractions"
+	evalcommon "github.com/eval-hub/eval-hub/internal/common"
 	"github.com/eval-hub/eval-hub/internal/messages"
 	se "github.com/eval-hub/eval-hub/internal/serviceerrors"
 	commonStorage "github.com/eval-hub/eval-hub/internal/storage/common"
@@ -57,14 +58,19 @@ func (s *SQLStorage) GetEvaluationJob(id string) (*api.EvaluationJobResource, er
 	return s.getEvaluationJobTransactional(nil, id)
 }
 
-func (s *SQLStorage) constructEvaluationResource(tenantID string, statusStr string, message *api.MessageInfo, dbID string, createdAt time.Time, updatedAt time.Time, experimentID string, evaluationEntity *EvaluationJobEntity) (*api.EvaluationJobResource, error) {
+func (s *SQLStorage) constructEvaluationResource(resource *api.EvaluationResource, status string, evaluationEntity *EvaluationJobEntity) (*api.EvaluationJobResource, error) {
+	if resource == nil {
+		s.logger.Error("Failed to construct evaluation job resource", "error", "Evaluation resource")
+		// Post-read validation: no writes done, so do not request rollback.
+		return nil, se.NewServiceError(messages.InternalServerError, "Error", "Evaluation resource does not exist")
+	}
 	if evaluationEntity == nil {
-		s.logger.Error("Failed to construct evaluation job resource", "error", "Evaluation entity does not exist", "id", dbID)
+		s.logger.Error("Failed to construct evaluation job resource", "error", "Evaluation entity does not exist", "id", resource.ID)
 		// Post-read validation: no writes done, so do not request rollback.
 		return nil, se.NewServiceError(messages.InternalServerError, "Error", "Evaluation entity does not exist")
 	}
 	if evaluationEntity.Config == nil {
-		s.logger.Error("Failed to construct evaluation job resource", "error", "Evaluation config does not exist", "id", dbID)
+		s.logger.Error("Failed to construct evaluation job resource", "error", "Evaluation config does not exist", "id", resource.ID)
 		// Post-read validation: no writes done, so do not request rollback.
 		return nil, se.NewServiceError(messages.InternalServerError, "Error", "Evaluation config does not exist")
 	}
@@ -72,32 +78,19 @@ func (s *SQLStorage) constructEvaluationResource(tenantID string, statusStr stri
 		evaluationEntity.Status = &api.EvaluationJobStatus{}
 	}
 
-	if message == nil {
-		message = evaluationEntity.Status.Message
-	}
 	overAllState := evaluationEntity.Status.State
-
-	if statusStr != "" {
-		if s, err := api.GetOverallState(statusStr); err == nil {
+	if status != "" {
+		if s, err := api.GetOverallState(status); err == nil {
 			overAllState = s
 		}
 	}
-	status := evaluationEntity.Status
-	status.State = overAllState
-	status.Message = message
+	statusObject := evaluationEntity.Status
+	statusObject.State = overAllState
+	statusObject.Message = evaluationEntity.Status.Message
 
-	tenant := api.Tenant(tenantID)
 	evaluationResource := &api.EvaluationJobResource{
-		Resource: api.EvaluationResource{
-			Resource: api.Resource{
-				ID:        dbID,
-				Tenant:    &tenant,
-				CreatedAt: &createdAt,
-				UpdatedAt: &updatedAt,
-			},
-			MLFlowExperimentID: experimentID,
-		},
-		Status:              status,
+		Resource:            *resource,
+		Status:              statusObject,
 		EvaluationJobConfig: *evaluationEntity.Config,
 		Results:             evaluationEntity.Results,
 	}
@@ -106,7 +99,7 @@ func (s *SQLStorage) constructEvaluationResource(tenantID string, statusStr stri
 
 func (s *SQLStorage) getEvaluationJobTransactional(txn *sql.Tx, id string) (*api.EvaluationJobResource, error) {
 	// Build the SELECT query
-	query := shared.EvaluationJobQuery{ID: id}
+	query := shared.EvaluationJobQuery{Resource: api.EvaluationResource{Resource: api.Resource{ID: id}}}
 	selectQuery, selectArgs, queryArgs := s.statementsFactory.CreateEvaluationGetEntityStatement(&query)
 
 	// Query the database
@@ -128,7 +121,7 @@ func (s *SQLStorage) getEvaluationJobTransactional(txn *sql.Tx, id string) (*api
 		return nil, se.NewServiceError(messages.JSONUnmarshalFailed, "Type", "evaluation job", "Error", err.Error())
 	}
 
-	job, err := s.constructEvaluationResource(query.Tenant, query.Status, nil, query.ID, query.CreatedAt, query.UpdatedAt, query.ExperimentID, &evaluationJobEntity)
+	job, err := s.constructEvaluationResource(&query.Resource, "", &evaluationJobEntity)
 	if err != nil {
 		return nil, se.WithRollback(err)
 	}
@@ -141,7 +134,7 @@ func (s *SQLStorage) GetEvaluationJobs(filter *abstractions.QueryFilter) (*abstr
 	limit := filter.Limit
 	offset := filter.Offset
 
-	if err := shared.ValidateFilter(slices.Collect(maps.Keys(params)), []string{"tenant_id", "status", "experiment_id"}); err != nil {
+	if err := shared.ValidateFilter(slices.Collect(maps.Keys(params)), s.statementsFactory.GetAllowedFilterColumns(shared.TABLE_EVALUATIONS)); err != nil {
 		return nil, err
 	}
 
@@ -181,38 +174,35 @@ func (s *SQLStorage) GetEvaluationJobs(filter *abstractions.QueryFilter) (*abstr
 
 	// Process rows
 	var constructErrs []string
-	var items []api.EvaluationJobResource
+	items := make([]api.EvaluationJobResource, 0)
 	for rows.Next() {
-		var dbID string
-		var createdAt, updatedAt time.Time
-		var tenantID string
+		resource := api.EvaluationResource{}
 		var statusStr string
-		var experimentID string
 		var entityJSON string
 
-		err = rows.Scan(&dbID, &createdAt, &updatedAt, &tenantID, &statusStr, &experimentID, &entityJSON)
+		err = rows.Scan(&resource.ID, &resource.CreatedAt, &resource.UpdatedAt, &resource.Tenant, &resource.Owner, &statusStr, &resource.MLFlowExperimentID, &entityJSON)
 		if err != nil {
 			s.logger.Error("Failed to scan evaluation job row", "error", err)
-			return nil, se.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", dbID, "Error", err.Error())
+			return nil, se.NewServiceError(messages.DatabaseOperationFailed, "Type", "evaluation job", "ResourceId", resource.ID, "Error", err.Error())
 		}
 
 		// Unmarshal the entity JSON into EvaluationJobConfig
 		var evaluationJobEntity EvaluationJobEntity
 		err = json.Unmarshal([]byte(entityJSON), &evaluationJobEntity)
 		if err != nil {
-			s.logger.Error("Failed to unmarshal evaluation job entity", "error", err, "id", dbID)
+			s.logger.Error("Failed to unmarshal evaluation job entity", "error", err, "id", resource.ID)
 			return nil, se.NewServiceError(messages.JSONUnmarshalFailed, "Type", "evaluation job", "Error", err.Error())
 		}
 
 		// Construct the EvaluationJobResource
-		resource, err := s.constructEvaluationResource(tenantID, statusStr, nil, dbID, createdAt, updatedAt, experimentID, &evaluationJobEntity)
+		evaluationJobResource, err := s.constructEvaluationResource(&resource, statusStr, &evaluationJobEntity)
 		if err != nil {
 			constructErrs = append(constructErrs, err.Error())
 			totalCount--
 			continue
 		}
 
-		items = append(items, *resource)
+		items = append(items, *evaluationJobResource)
 	}
 
 	if err = rows.Err(); err != nil {
@@ -279,6 +269,7 @@ func (s *SQLStorage) checkEvaluationJobState(evaluationJobID string, evaluationJ
 
 func (s *SQLStorage) UpdateEvaluationJobStatus(id string, state api.OverallState, message *api.MessageInfo) error {
 	// we have to get the evaluation job and update the status so we need a transaction
+	s.logger.Debug("Updating evaluation job status", "id", id, "state", state, "message", message)
 	err := s.withTransaction("update evaluation job status", id, func(txn *sql.Tx) error {
 		// get the evaluation job
 		evaluationJob, err := s.getEvaluationJobTransactional(txn, id)
@@ -349,8 +340,35 @@ func (s *SQLStorage) updateEvaluationJobTxn(txn *sql.Tx, id string, status api.O
 	return nil
 }
 
+// validateBenchmarkExists checks that the event's benchmark is valid for the job (in job.Benchmarks or in the job's collection).
+func (s *SQLStorage) validateBenchmarkExists(job *api.EvaluationJobResource, runStatus *api.StatusEvent) error {
+	event := runStatus.BenchmarkStatusEvent
+	benchmarks, err := evalcommon.GetJobBenchmarks(job, s.GetCollection)
+	if err != nil {
+		s.logger.Error("Failed to get job benchmarks", "error", err, "job_id", job.Resource.ID)
+		return err
+	}
+	if len(benchmarks) == 0 {
+		return se.NewServiceError(messages.ResourceNotFound, "Type", "benchmark", "ResourceId", event.ID, "Error", "Invalid Benchmark for the evaluation job")
+	}
+	found := false
+	for index, benchmark := range benchmarks {
+		if benchmark.ID == event.ID &&
+			benchmark.ProviderID == event.ProviderID &&
+			index == event.BenchmarkIndex {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return se.NewServiceError(messages.ResourceNotFound, "Type", "benchmark", "ResourceId", event.ID, "Error", "Invalid Benchmark for the evaluation job")
+	}
+	return nil
+}
+
 // UpdateEvaluationJobWithRunStatus runs in a transaction: fetches the job, merges RunStatusInternal into the entity, and persists.
 func (s *SQLStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) error {
+	s.logger.Debug("Updating evaluation job", "id", id, "runStatus", runStatus)
 	err := s.withTransaction("update evaluation job", id, func(txn *sql.Tx) error {
 		job, err := s.getEvaluationJobTransactional(txn, id)
 		if err != nil {
@@ -363,7 +381,7 @@ func (s *SQLStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) 
 			return err
 		}
 
-		err = commonStorage.ValidateBenchmarkExists(job, runStatus)
+		err = s.validateBenchmarkExists(job, runStatus)
 		if err != nil {
 			return err
 		}
@@ -380,7 +398,7 @@ func (s *SQLStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) 
 		}
 		commonStorage.UpdateBenchmarkStatus(job, runStatus, &benchmark)
 
-		outcome := computeBenchmarkTestResult(job, runStatus.BenchmarkStatusEvent)
+		outcome := s.computeBenchmarkTestResult(job, runStatus.BenchmarkStatusEvent)
 
 		// if the run status is terminal, we need to update the results
 		if api.IsBenchmarkTerminalState(runStatus.BenchmarkStatusEvent.Status) {
@@ -401,7 +419,10 @@ func (s *SQLStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) 
 		}
 
 		// get the overall job status
-		overallState, message := commonStorage.GetOverallJobStatus(job)
+		overallState, message, err := commonStorage.GetOverallJobStatus(job, s.GetCollection)
+		if err != nil {
+			return err
+		}
 		job.Status.State = overallState
 		job.Status.Message = message
 
@@ -428,6 +449,11 @@ func (s *SQLStorage) computeJobTestResult(job *api.EvaluationJobResource) {
 	}
 	var sumOfWeightedScores float32 = 0.0
 	var sumOfWeights float32 = 0.0
+	resolvedJobBenchmarks, err := evalcommon.GetJobBenchmarks(job, s.GetCollection)
+	if err != nil {
+		s.logger.Error("Failed to get job benchmarks", "error", err, "job_id", job.Resource.ID)
+		return
+	}
 	for _, benchmark := range job.Results.Benchmarks {
 		if benchmark.Test == nil {
 			// if the benchmark test result is not defined, we skip it
@@ -435,13 +461,22 @@ func (s *SQLStorage) computeJobTestResult(job *api.EvaluationJobResource) {
 			s.logger.Info("Benchmark test result is not defined for benchmark", "benchmark_id", benchmark.ID, "benchmark_index", benchmark.BenchmarkIndex)
 			continue
 		}
-		benchmarkWeight := job.Benchmarks[benchmark.BenchmarkIndex].Weight
+		if benchmark.BenchmarkIndex < 0 || benchmark.BenchmarkIndex >= len(resolvedJobBenchmarks) {
+			s.logger.Warn(
+				"benchmark index out of range for resolved benchmarks",
+				"benchmark_id", benchmark.ID,
+				"benchmark_index", benchmark.BenchmarkIndex,
+				"resolved_count", len(resolvedJobBenchmarks),
+			)
+			continue
+		}
+		benchmarkWeight := resolvedJobBenchmarks[benchmark.BenchmarkIndex].Weight
 		if benchmarkWeight == 0 {
 			// if the benchmark weight is not defined, we set it to 1
 			benchmarkWeight = 1
 		}
 		weightedScore := benchmarkWeight * benchmark.Test.PrimaryScore
-		if job.Benchmarks[benchmark.BenchmarkIndex].PrimaryScore.LowerIsBetter {
+		if primaryScore := resolvedJobBenchmarks[benchmark.BenchmarkIndex].PrimaryScore; primaryScore != nil && primaryScore.LowerIsBetter {
 			weightedScore = benchmarkWeight * (1 - benchmark.Test.PrimaryScore)
 		}
 		sumOfWeightedScores += weightedScore
@@ -467,28 +502,83 @@ func (s *SQLStorage) computeJobTestResult(job *api.EvaluationJobResource) {
 	job.Results.Test = jobTest
 }
 
-func computeBenchmarkTestResult(job *api.EvaluationJobResource, benchmarkStatusEvent *api.BenchmarkStatusEvent) *api.BenchmarkTest {
-	for _, benchmark := range job.Benchmarks {
-		if benchmark.ID == benchmarkStatusEvent.ID && benchmark.ProviderID == benchmarkStatusEvent.ProviderID {
-			//TODO: If primary score is not defined in the API request, the default primary score for the benchmark should be read from the provider.
-			//TBD after the code to access providers from 'internal' package is implemented.
-			if benchmark.PrimaryScore != nil && benchmark.PrimaryScore.Metric != "" {
-				primaryMetric := benchmark.PrimaryScore.Metric
-				if primaryMetricValue, ok := benchmarkStatusEvent.Metrics[primaryMetric]; ok {
-					primaryMetricValueFloat := float32(primaryMetricValue.(float64))
-					passCriteria := benchmark.PassCriteria.Threshold
-					pass := primaryMetricValueFloat >= passCriteria
-					if benchmark.PrimaryScore.LowerIsBetter {
-						pass = primaryMetricValueFloat <= passCriteria
+func (s *SQLStorage) computeBenchmarkTestResult(job *api.EvaluationJobResource, benchmarkStatusEvent *api.BenchmarkStatusEvent) *api.BenchmarkTest {
+	// job could have benchmarks array or it could have collection. If it has collection, we need to get the benchmarks from the collection
+	benchmarks, err := evalcommon.GetJobBenchmarks(job, s.GetCollection)
+	if err != nil {
+		s.logger.Error("Failed to get job benchmarks", "error", err, "job_id", job.Resource.ID)
+		return nil
+	}
+	if len(benchmarks) == 0 {
+		return nil
+	}
+	for _, benchmark := range benchmarks {
+		if benchmark.ID != benchmarkStatusEvent.ID || benchmark.ProviderID != benchmarkStatusEvent.ProviderID {
+			continue
+		}
+		primaryScore := benchmark.PrimaryScore
+		var providerBench *api.BenchmarkResource
+		// if the primary score is not defined, we need to get the primary score from the provider
+		if (primaryScore == nil || primaryScore.Metric == "") && benchmark.ProviderID != "" {
+			provider, err := s.GetProvider(benchmark.ProviderID)
+			if err == nil && provider != nil {
+				for i := range provider.Benchmarks {
+					if provider.Benchmarks[i].ID == benchmark.ID {
+						providerBench = &provider.Benchmarks[i]
+						break
 					}
-					return &api.BenchmarkTest{
-						PrimaryScore: primaryMetricValueFloat,
-						Threshold:    benchmark.PassCriteria.Threshold,
-						Pass:         pass,
-					}
+				}
+			}
+			if providerBench != nil && providerBench.PrimaryScore != nil && providerBench.PrimaryScore.Metric != "" {
+				primaryScore = providerBench.PrimaryScore
+			}
+		}
+		if primaryScore != nil && primaryScore.Metric != "" {
+			primaryMetric := primaryScore.Metric
+			if primaryMetricValue, ok := benchmarkStatusEvent.Metrics[primaryMetric]; ok {
+				primaryMetricValueFloat, err := castAnyToFloat32(primaryMetricValue)
+				if err != nil {
+					s.logger.Error("Failed to cast primary metric value to float32", "error", err, "primary_metric", primaryMetric, "primary_metric_value", primaryMetricValue)
+					return nil
+				}
+				var threshold float32
+				if benchmark.PassCriteria != nil {
+					threshold = benchmark.PassCriteria.Threshold
+				} else if providerBench != nil && providerBench.PassCriteria != nil {
+					threshold = providerBench.PassCriteria.Threshold
+				} else {
+					return nil
+				}
+				pass := primaryMetricValueFloat >= threshold
+				if primaryScore.LowerIsBetter {
+					pass = primaryMetricValueFloat <= threshold
+				}
+				return &api.BenchmarkTest{
+					PrimaryScore: primaryMetricValueFloat,
+					Threshold:    threshold,
+					Pass:         pass,
 				}
 			}
 		}
 	}
 	return nil
+}
+
+func castAnyToFloat32(primaryMetricValue any) (float32, error) {
+	var primaryMetricValueFloat float32
+	switch v := primaryMetricValue.(type) {
+	case float64:
+		primaryMetricValueFloat = float32(v)
+	case float32:
+		primaryMetricValueFloat = v
+	case int:
+		primaryMetricValueFloat = float32(v)
+	case int32:
+		primaryMetricValueFloat = float32(v)
+	case int64:
+		primaryMetricValueFloat = float32(v)
+	default:
+		return 0, fmt.Errorf("unsupported type: %T for primary metric value", primaryMetricValue)
+	}
+	return primaryMetricValueFloat, nil
 }

@@ -35,11 +35,10 @@ type BenchmarkSpec struct {
 
 // HandleCreateEvaluation handles POST /api/v1/evaluations/jobs
 func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext, req http_wrappers.RequestWrapper, w http_wrappers.ResponseWrapper) {
-	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx).WithTenant(ctx.Tenant)
+	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx).WithTenant(ctx.Tenant).WithOwner(ctx.User)
 
 	logging.LogRequestStarted(ctx)
 
-	now := time.Now()
 	id := common.GUID()
 
 	evaluation := &api.EvaluationJobConfig{}
@@ -56,7 +55,10 @@ func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext
 			if err != nil {
 				return err
 			}
-			return h.validateBenchmarkReferences(evaluation)
+			resolveProvider := func(providerID string) (*api.ProviderResource, error) {
+				return common.ResolveProvider(providerID, h.providerConfigs, storage)
+			}
+			return h.validateBenchmarkReferences(evaluation, storage.GetCollection, resolveProvider)
 		},
 		"validation",
 		"validate-evaluation-job",
@@ -89,9 +91,9 @@ func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext
 				Resource: api.EvaluationResource{
 					Resource: api.Resource{
 						ID:        id,
-						CreatedAt: &now,
+						CreatedAt: time.Now(),
 						Owner:     ctx.User,
-						Tenant:    &ctx.Tenant,
+						Tenant:    ctx.Tenant,
 						ReadOnly:  false,
 					},
 					MLFlowExperimentID: mlflowExperimentID,
@@ -128,7 +130,7 @@ func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext
 		ctx,
 		func(runtimeCtx context.Context) (fnErr error) {
 			if h.runtime != nil {
-				runErr := h.executeEvaluationJob(runtimeCtx, ctx.Logger, h.runtime, job, &storage)
+				runErr := h.executeEvaluationJob(runtimeCtx, ctx.Logger, h.runtime, job, storage)
 				if runErr != nil {
 					ctx.Logger.Error("RunEvaluationJob failed", "error", runErr, "job_id", job.Resource.ID)
 					state := api.OverallStateFailed
@@ -155,15 +157,15 @@ func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext
 	)
 }
 
-func (h *Handlers) executeEvaluationJob(ctx context.Context, logger *slog.Logger, runtime abstractions.Runtime, job *api.EvaluationJobResource, storage *abstractions.Storage) error {
+func (h *Handlers) executeEvaluationJob(ctx context.Context, logger *slog.Logger, runtime abstractions.Runtime, job *api.EvaluationJobResource, storage abstractions.Storage) error {
 	// Detach storage from the HTTP request context so that background
 	// goroutines inside the runtime can update job status after the
 	// request completes. This is the single transition point from
 	// request-scoped work to background runtime work, covering all
 	// runtime implementations (local, k8s, etc.).
-	if storage != nil && *storage != nil {
-		detached := (*storage).WithContext(context.Background())
-		storage = &detached
+	if storage != nil {
+		detached := storage.WithContext(context.Background())
+		storage = detached
 	}
 
 	var err error
@@ -181,10 +183,18 @@ func (h *Handlers) executeEvaluationJob(ctx context.Context, logger *slog.Logger
 	return err
 }
 
-func (h *Handlers) validateBenchmarkReferences(evaluation *api.EvaluationJobConfig) error {
-	for _, benchmark := range evaluation.Benchmarks {
-		provider, ok := h.providerConfigs[benchmark.ProviderID]
-		if !ok {
+// ResolveProviderFunc resolves a provider by ID. Used by validateBenchmarkReferences so it does not depend on storage or context.
+type ResolveProviderFunc func(providerID string) (*api.ProviderResource, error)
+
+func (h *Handlers) validateBenchmarkReferences(evaluation *api.EvaluationJobConfig, getCollection common.GetCollectionFunc, resolveProvider ResolveProviderFunc) error {
+	jobForResolve := &api.EvaluationJobResource{EvaluationJobConfig: *evaluation}
+	benchmarks, err := common.GetJobBenchmarks(jobForResolve, getCollection)
+	if err != nil {
+		return err
+	}
+	for _, benchmark := range benchmarks {
+		provider, err := resolveProvider(benchmark.ProviderID)
+		if err != nil || provider == nil {
 			return serviceerrors.NewServiceError(
 				messages.RequestFieldInvalid,
 				"ParameterName", "provider_id",
@@ -213,7 +223,7 @@ func benchmarkExists(benchmarks []api.BenchmarkResource, id string) bool {
 
 // HandleListEvaluations handles GET /api/v1/evaluations/jobs
 func (h *Handlers) HandleListEvaluations(ctx *executioncontext.ExecutionContext, r http_wrappers.RequestWrapper, w http_wrappers.ResponseWrapper) {
-	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx).WithTenant(ctx.Tenant)
+	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx).WithTenant(ctx.Tenant).WithOwner(ctx.User)
 
 	logging.LogRequestStarted(ctx)
 
@@ -243,7 +253,8 @@ func (h *Handlers) HandleListEvaluations(ctx *executioncontext.ExecutionContext,
 
 // HandleGetEvaluation handles GET /api/v1/evaluations/jobs/{id}
 func (h *Handlers) HandleGetEvaluation(ctx *executioncontext.ExecutionContext, r http_wrappers.RequestWrapper, w http_wrappers.ResponseWrapper) {
-	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx).WithTenant(ctx.Tenant)
+	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx).WithTenant(ctx.Tenant).WithOwner(ctx.User)
+
 	logging.LogRequestStarted(ctx)
 
 	// Extract ID from path
@@ -263,7 +274,8 @@ func (h *Handlers) HandleGetEvaluation(ctx *executioncontext.ExecutionContext, r
 }
 
 func (h *Handlers) HandleUpdateEvaluation(ctx *executioncontext.ExecutionContext, r http_wrappers.RequestWrapper, w http_wrappers.ResponseWrapper) {
-	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx).WithTenant(ctx.Tenant)
+	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx).WithTenant(ctx.Tenant).WithOwner(ctx.User)
+
 	logging.LogRequestStarted(ctx)
 
 	// Extract ID from path
@@ -297,7 +309,8 @@ func (h *Handlers) HandleUpdateEvaluation(ctx *executioncontext.ExecutionContext
 
 // HandleCancelEvaluation handles DELETE /api/v1/evaluations/jobs/{id}
 func (h *Handlers) HandleCancelEvaluation(ctx *executioncontext.ExecutionContext, r http_wrappers.RequestWrapper, w http_wrappers.ResponseWrapper) {
-	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx).WithTenant(ctx.Tenant)
+	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx).WithTenant(ctx.Tenant).WithOwner(ctx.User)
+
 	logging.LogRequestStarted(ctx)
 
 	// Extract ID from path
