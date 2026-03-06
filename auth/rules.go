@@ -11,8 +11,24 @@ import (
 	"k8s.io/apiserver/pkg/authorization/authorizer"
 )
 
-func matchEndpoint(fromRequest string, fromConfig string) bool {
-	return strings.HasPrefix(fromRequest, fromConfig)
+func matchEndpoint(endpoint string, endpointPattern Endpoint) bool {
+	pattern_parts := endpointPattern.PathParts
+	if len(pattern_parts) == 0 {
+		return false
+	}
+	endpoint_parts := strings.Split(endpoint, "/")
+
+	for i, part := range pattern_parts {
+		if part == "*" {
+			continue
+		}
+
+		if i >= len(endpoint_parts) || endpoint_parts[i] != part {
+			return false
+		}
+	}
+
+	return true
 }
 
 func matchMethods(fromRequest string, fromConfig []string) bool {
@@ -25,7 +41,7 @@ func matchMethods(fromRequest string, fromConfig []string) bool {
 
 func FindRules(request *http.Request, config AuthConfig) []ResourceRule {
 	for _, endpoint := range config.Authorization.Endpoints {
-		if matchEndpoint(request.URL.Path, endpoint.Path) {
+		if matchEndpoint(request.URL.Path, endpoint) {
 			for _, mapping := range endpoint.Mappings {
 				if matchMethods(request.Method, mapping.Methods) {
 					return mapping.Resources
@@ -104,5 +120,6 @@ func AttributesFromRequest(request *http.Request, config AuthConfig, user user.I
 			ResourceRequest: true,
 		})
 	}
+
 	return resourceAttributes
 }

@@ -3,6 +3,8 @@
 # Variables
 BINARY_NAME = eval-hub
 CMD_PATH = ./cmd/eval_hub
+INIT_BINARY_NAME = eval-hub-init
+INIT_CMD_PATH = ./cmd/eval_hub_init
 BIN_DIR = bin
 PORT ?= 8080
 
@@ -43,19 +45,25 @@ $(BIN_DIR):
 	@mkdir -p $(BIN_DIR)
 
 BUILD_PACKAGE ?= main
-FULL_BUILD_NUMBER ?= 0.0.1
+FULL_BUILD_NUMBER ?= 0.2.0
 LDFLAGS_X = -X "${BUILD_PACKAGE}.Build=${FULL_BUILD_NUMBER}" -X "${BUILD_PACKAGE}.BuildDate=$(DATE)"
 LDFLAGS = -buildmode=exe ${LDFLAGS_X}
 
-build: $(BIN_DIR) ## Build the binary
+build: $(BIN_DIR) ## Build the binaries
 	@echo "Building $(BINARY_NAME) with ${LDFLAGS}"
 	@go build -race -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Build complete: $(BIN_DIR)/$(BINARY_NAME)"
+	@echo "Building $(INIT_BINARY_NAME) with ${LDFLAGS}"
+	@go build -race -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(INIT_BINARY_NAME) $(INIT_CMD_PATH)
+	@echo "Build complete: $(BIN_DIR)/$(INIT_BINARY_NAME)"
 
-build-coverage: $(BIN_DIR) ## Build the binary with coverage
+build-coverage: $(BIN_DIR) ## Build the binaries with coverage
 	@echo "Building $(BINARY_NAME)-cov with -cover -covermode=atomic -ldflags ${LDFLAGS} "
 	@go build -race -cover -covermode=atomic -coverpkg=./... -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(BINARY_NAME)-cov $(CMD_PATH)
 	@echo "Build complete: $(BIN_DIR)/$(BINARY_NAME)-cov"
+	@echo "Building $(INIT_BINARY_NAME)-cov with -cover -covermode=atomic -ldflags ${LDFLAGS} "
+	@go build -race -cover -covermode=atomic -coverpkg=./... -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(INIT_BINARY_NAME)-cov $(INIT_CMD_PATH)
+	@echo "Build complete: $(BIN_DIR)/$(INIT_BINARY_NAME)-cov"
 
 SERVER_PID_FILE ?= $(BIN_DIR)/pid
 
@@ -95,6 +103,16 @@ test: ## Run unit tests
 	@echo "Running unit tests..."
 	@go test -v ./auth/... ./internal/... ./cmd/...
 
+GOBIN := $(shell go env GOPATH)/bin
+
+$(GOBIN)/gotest:
+	GOBIN=$(GOBIN) go install github.com/rakyll/gotest@latest
+
+test-color: $(GOBIN)/gotest
+	@echo "Running unit tests with color..."
+	@$(GOBIN)/gotest -v -race ./internal/... ./cmd/...
+	@echo "Unit tests complete"
+
 test-fvt: $(BIN_DIR) ## Run FVT (Functional Verification Tests) using godog
 	@echo "Running FVT tests..."
 	@go test -v -race ./tests/features/...
@@ -119,8 +137,10 @@ test-fvt-server: start-service ## Run FVT tests using godog against a running se
 test-coverage: $(BIN_DIR) ## Run unit tests with coverage
 	@echo "Running unit tests with coverage..."
 	@go test -v -race -coverprofile=$(BIN_DIR)/coverage.out -covermode=atomic ./internal/... ./cmd/...
+	@go test -v -race -coverprofile=$(BIN_DIR)/coverage-init.out -covermode=atomic ./cmd/eval_hub_init
 	@go tool cover -html=$(BIN_DIR)/coverage.out -o $(BIN_DIR)/coverage.html
-	@echo "Coverage report generated: $(BIN_DIR)/coverage.html"
+	@go tool cover -html=$(BIN_DIR)/coverage-init.out -o $(BIN_DIR)/coverage-init.html
+	@echo "Coverage report generated: $(BIN_DIR)/coverage.html and $(BIN_DIR)/coverage-init.html"
 
 test-fvt-coverage: $(BIN_DIR)## Run integration (FVT) tests with coverage
 	@echo "Running integration (FVT) tests with coverage..."
