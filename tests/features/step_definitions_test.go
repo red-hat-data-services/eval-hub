@@ -163,7 +163,7 @@ func (a *apiFeature) startLocalServer(port int) error {
 	if err != nil {
 		return logError(fmt.Errorf("failed to create validator: %w", err))
 	}
-	serviceConfig, err := config.LoadConfig(logger, "0.0.1", "local", time.Now().Format(time.RFC3339))
+	serviceConfig, err := config.LoadConfig(logger, "0.2.0", "local", time.Now().Format(time.RFC3339))
 	if err != nil {
 		return logError(fmt.Errorf("failed to load service config: %w", err))
 	}
@@ -397,10 +397,10 @@ func (tc *scenarioConfig) substituteValues(body string) (string, error) {
 		match := re.FindStringSubmatch(body)
 		if len(match) > 1 {
 			if strings.HasPrefix(match[1], mlflowPrefix) {
-				v := ""
-				if tc.isMLFlow() {
-					v = strings.TrimPrefix(match[1], mlflowPrefix)
-				}
+				// Use the literal after mlflow: as the experiment name. When MLflow is configured,
+				// it could be resolved from MLflow; for tests without MLflow, this allows name-based
+				// search to match stored jobs.
+				v := strings.TrimPrefix(match[1], mlflowPrefix)
 				body = strings.ReplaceAll(body, fmt.Sprintf("{{%s}}", match[1]), v)
 			} else if strings.HasPrefix(match[1], envPrefix) {
 				raw := strings.TrimPrefix(match[1], envPrefix)
