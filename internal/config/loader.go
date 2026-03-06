@@ -185,7 +185,8 @@ func LoadAuthConfig(logger *slog.Logger, dirs ...string) (*auth.AuthConfig, erro
 		return nil, err
 	}
 
-	return &authConfig, nil
+	optimized := authConfig.Optimize()
+	return &optimized, nil
 }
 
 // LoadConfig loads configuration using a two-tier system with Viper. This implements

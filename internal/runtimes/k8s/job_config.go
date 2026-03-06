@@ -22,7 +22,7 @@ const (
 	mlflowTrackingURIEnv     = "MLFLOW_TRACKING_URI"
 	mlflowWorkspaceEnv       = "MLFLOW_WORKSPACE"
 	inClusterNamespaceFile   = "/var/run/secrets/kubernetes.io/serviceaccount/namespace"
-	serviceAccountNameSuffix = "-jobs"
+	serviceAccountNameSuffix = "-job"
 	serviceCAConfigMapSuffix = "-service-ca"
 	defaultEvalHubPort       = "8443"
 	defaultTestDataInitCmd   = "/app/eval-hub-init"
@@ -99,7 +99,7 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 	// Build ServiceAccount name, ConfigMap name, and EvalHub URL if instance name is set
 	var serviceAccountName, serviceCAConfigMap, evalHubURL string
 	if evalHubInstanceName != "" {
-		serviceAccountName = evalHubInstanceName + serviceAccountNameSuffix
+		serviceAccountName = evalHubInstanceName + "-" + namespace + serviceAccountNameSuffix
 		serviceCAConfigMap = evalHubInstanceName + serviceCAConfigMapSuffix
 		// EvalHub URL points to the kube-rbac-proxy HTTPS endpoint
 		evalHubURL = fmt.Sprintf("https://%s.%s.svc.cluster.local:%s",

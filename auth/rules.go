@@ -96,9 +96,17 @@ func AttributesFromRequest(request *http.Request, config AuthConfig, user user.I
 		templateValues := TemplateValues{}
 		if rule.Rewrites.ByHttpHeader != nil {
 			value := request.Header.Get(rule.Rewrites.ByHttpHeader.Name)
-			if value != "" {
-				templateValues.FromHeader = value
+			if value == "" {
+				// A required header rewrite is configured but the header is missing.
+				// Return an attribute record that will always be denied: empty namespace,
+				// resource, and verb guarantee the SAR check fails.
+				resourceAttributes = append(resourceAttributes, authorizer.AttributesRecord{
+					User:            user,
+					ResourceRequest: true,
+				})
+				continue
 			}
+			templateValues.FromHeader = value
 		}
 		if rule.Rewrites.ByQueryString != nil {
 			value, ok := request.URL.Query()[rule.Rewrites.ByQueryString.Name]
