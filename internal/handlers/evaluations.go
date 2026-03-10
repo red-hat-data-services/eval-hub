@@ -75,6 +75,11 @@ func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext
 	mlflowExperimentURL := ""
 	if h.mlflowClient != nil {
 		client := h.mlflowClient.WithContext(ctx.Ctx).WithLogger(ctx.Logger)
+		// Experiments must be scoped to the tenant namespace so job pods running
+		// in that namespace can reach them with their own X-MLFLOW-WORKSPACE header.
+		if !ctx.Tenant.IsEmpty() {
+			client = client.WithWorkspace(ctx.Tenant.String())
+		}
 
 		mlflowExperimentID, mlflowExperimentURL, err = mlflow.GetExperimentID(client, evaluation, id)
 		if err != nil {
