@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"slices"
 	"strconv"
+	"strings"
 
 	"github.com/eval-hub/eval-hub/internal/abstractions"
 	"github.com/eval-hub/eval-hub/internal/executioncontext"
@@ -52,8 +53,15 @@ func DecodeParam(v string) string {
 }
 
 func GetParam[T string | int | bool](r http_wrappers.RequestWrapper, name string, optional bool, defaultValue T) (T, error) {
-	values := r.Query(name)
-	if (len(values) == 0) || (values[0] == "") {
+	rawValues := r.Query(name)
+	// Ignore empty repeated query values before joining
+	values := make([]string, 0, len(rawValues))
+	for _, value := range rawValues {
+		if value != "" {
+			values = append(values, value)
+		}
+	}
+	if len(values) == 0 {
 		if !optional {
 			return defaultValue, serviceerrors.NewServiceError(messages.QueryParameterRequired, "ParameterName", name)
 		}
@@ -61,7 +69,15 @@ func GetParam[T string | int | bool](r http_wrappers.RequestWrapper, name string
 	}
 	switch any(defaultValue).(type) {
 	case string:
-		return any(DecodeParam(values[0])).(T), nil
+		// we support multiple values for a single parameter by joining them with a comma
+		var sb strings.Builder
+		for i, value := range values {
+			if i > 0 {
+				sb.WriteString(",")
+			}
+			sb.WriteString(DecodeParam(value))
+		}
+		return any(sb.String()).(T), nil
 	case int:
 		v, err := strconv.Atoi(values[0])
 		if err != nil {
