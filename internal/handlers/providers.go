@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/eval-hub/eval-hub/internal/messages"
 	"github.com/eval-hub/eval-hub/internal/serialization"
 	"github.com/eval-hub/eval-hub/internal/serviceerrors"
+	"github.com/eval-hub/eval-hub/internal/storage/sql/shared"
 	"github.com/eval-hub/eval-hub/pkg/api"
 )
 
@@ -116,31 +118,81 @@ func (h *Handlers) HandleCreateProvider(ctx *executioncontext.ExecutionContext, 
 }
 
 func (h *Handlers) filterSystemProviders(filter map[string]any) []api.ProviderResource {
-	filteredProviders := []api.ProviderResource{}
-	for _, p := range h.providerConfigs {
+	// Filter keys relevant for system providers (owner, tenant_id, status are not applicable)
+	allowedKeys := []string{"name", "tags"}
+	filteredProviders := make([]api.ProviderResource, 0, len(h.providerConfigs))
+
+	// Iterate over sorted keys for deterministic ordering (map iteration is random)
+	for _, id := range slices.Sorted(maps.Keys(h.providerConfigs)) {
+		p := h.providerConfigs[id]
 		if len(filter) == 0 {
 			filteredProviders = append(filteredProviders, p)
 			continue
 		}
-		for k, v := range filter {
-			pass := true
-			// we don't query by owner, tenant, or status as they are not relevant for system providers
-			switch k {
-			case "name":
-				if p.ProviderConfig.Name != v {
-					pass = false
-				}
-			case "tags":
-				if !slices.Contains(p.ProviderConfig.Tags, v.(string)) {
-					pass = false
-				}
+		matchesAll := true
+		for _, key := range slices.Sorted(maps.Keys(filter)) {
+			if !slices.Contains(allowedKeys, key) {
+				continue
 			}
-			if pass {
-				filteredProviders = append(filteredProviders, p)
+			v := filter[key]
+			values, operator := shared.GetValues(key, v)
+			if !matchesProviderFilterKey(p, key, values, operator) {
+				matchesAll = false
+				break
 			}
+		}
+		if matchesAll {
+			filteredProviders = append(filteredProviders, p)
 		}
 	}
 	return filteredProviders
+}
+
+// matchesFilterKey returns true if the provider matches the filter key.
+// values and operator come from shared.GetValues (comma=AND, pipe=OR).
+func matchesProviderFilterKey(p api.ProviderResource, key string, values []any, operator string) bool {
+	getStr := func(v any) string {
+		if s, ok := v.(string); ok {
+			return s
+		}
+		return fmt.Sprintf("%v", v)
+	}
+	switch key {
+	case "name":
+		if operator == "OR" {
+			for _, val := range values {
+				if p.ProviderConfig.Name == getStr(val) {
+					return true
+				}
+			}
+			return false
+		}
+		// AND: name must equal all values (typically one value)
+		for _, val := range values {
+			if p.ProviderConfig.Name != getStr(val) {
+				return false
+			}
+		}
+		return true
+	case "tags":
+		if operator == "OR" {
+			for _, val := range values {
+				if slices.Contains(p.ProviderConfig.Tags, getStr(val)) {
+					return true
+				}
+			}
+			return false
+		}
+		// AND: provider must have all tags
+		for _, val := range values {
+			if !slices.Contains(p.ProviderConfig.Tags, getStr(val)) {
+				return false
+			}
+		}
+		return true
+	default:
+		return true
+	}
 }
 
 // HandleListProviders handles GET /api/v1/evaluations/providers
@@ -164,14 +216,15 @@ func (h *Handlers) HandleListProviders(ctx *executioncontext.ExecutionContext, r
 		return
 	}
 
+	systemDefined, err := GetParam(req, "system_defined", true, "")
+	if err != nil {
+		w.Error(err, ctx.RequestID)
+		return
+	}
+	isReadOnly := "only" == systemDefined
+
 	providers := []api.ProviderResource{}
 
-	// TODO fix(filter): make system-defined providers follow the same filter semantics as stored providers.
-	// CommonListFilters now feeds centralized query params into the system-provider path,
-	// but filterSystemProviders still does a raw tag equality check and evaluates each key independently.
-	// Queries like ?tags=a|b, ?tags=a,b, or ?name=x&tags=y will therefore behave differently for
-	// system providers than for storage-backed providers, and multi-key matches can append the same provider more than once.
-	// Please reuse the same AND/OR evaluation here instead of the bespoke matcher.
 	if IncludeSystemDefined(req) {
 		providers = h.filterSystemProviders(filter.ExtractQueryParams().Params)
 		ctx.Logger.Info(fmt.Sprintf("Included %d system defined providers", len(providers)))
@@ -180,29 +233,39 @@ func (h *Handlers) HandleListProviders(ctx *executioncontext.ExecutionContext, r
 	totalCount := len(providers)
 
 	// first check to see if the system providers are enough for the paging
-	if len(providers) > 0 {
-		if len(providers) < (filter.Limit + filter.Offset) {
-			userFilter := &abstractions.QueryFilter{
-				Limit:  max(0, filter.Limit-len(providers)),
-				Offset: max(0, filter.Offset-len(providers)),
-				Params: filter.Params,
+	if filter.Offset < len(providers) {
+		if len(providers) < filter.Limit {
+			if !isReadOnly {
+				userFilter := &abstractions.QueryFilter{
+					Limit:  max(0, filter.Limit-len(providers)),
+					Offset: max(0, filter.Offset-len(providers)),
+					Params: filter.Params,
+				}
+				ctx.Logger.Debug("Get providers", "filter", userFilter)
+				queryResults, err := storage.GetProviders(userFilter)
+				if err != nil {
+					w.Error(err, ctx.RequestID)
+					return
+				}
+				providers = append(providers[filter.Offset:], queryResults.Items...)
+				totalCount += queryResults.TotalCount
 			}
-			queryResults, err := storage.GetProviders(userFilter)
-			if err != nil {
-				w.Error(err, ctx.RequestID)
-				return
-			}
-			providers = append(providers, queryResults.Items...)
-			totalCount += queryResults.TotalCount
+		} else {
+			providers = providers[:filter.Limit]
 		}
-	} else {
-		// no system providers so normal flow for user providers
-		queryResults, err := storage.GetProviders(filter)
+	} else if !isReadOnly {
+		userFilter := &abstractions.QueryFilter{
+			Limit:  filter.Limit,
+			Offset: max(0, filter.Offset-len(providers)),
+			Params: filter.Params,
+		}
+		ctx.Logger.Debug("Get providers", "filter", userFilter)
+		queryResults, err := storage.GetProviders(userFilter)
 		if err != nil {
 			w.Error(err, ctx.RequestID)
 			return
 		}
-		providers = append(providers, queryResults.Items...)
+		providers = queryResults.Items
 		totalCount += queryResults.TotalCount
 	}
 
@@ -301,7 +364,7 @@ func (h *Handlers) HandleUpdateProvider(ctx *executioncontext.ExecutionContext, 
 		return
 	}
 
-	request := &api.ProviderResource{}
+	request := &api.ProviderConfig{}
 
 	err := h.withSpan(
 		ctx,
