@@ -147,7 +147,14 @@ func (h *Handlers) filterSystemProviders(filter map[string]any) []api.ProviderRe
 func (h *Handlers) HandleListProviders(ctx *executioncontext.ExecutionContext, req http_wrappers.RequestWrapper, w http_wrappers.ResponseWrapper) {
 	storage := h.storage.WithLogger(ctx.Logger).WithContext(ctx.Ctx).WithTenant(ctx.Tenant).WithOwner(ctx.User)
 
-	logging.LogRequestStarted(ctx)
+	filter, err := CommonListFilters(req)
+
+	logging.LogRequestStarted(ctx, "filter", filter)
+
+	if err != nil {
+		w.Error(err, ctx.RequestID)
+		return
+	}
 
 	allowedParams := []string{"limit", "offset", "benchmarks", "name", "tags", "system_defined", "benchmarks", "owner"}
 	badParams := getAllParams(req, allowedParams...)
@@ -157,14 +164,14 @@ func (h *Handlers) HandleListProviders(ctx *executioncontext.ExecutionContext, r
 		return
 	}
 
-	filter, err := CommonListFilters(req)
-	if err != nil {
-		w.Error(err, ctx.RequestID)
-		return
-	}
-
 	providers := []api.ProviderResource{}
 
+	// TODO fix(filter): make system-defined providers follow the same filter semantics as stored providers.
+	// CommonListFilters now feeds centralized query params into the system-provider path,
+	// but filterSystemProviders still does a raw tag equality check and evaluates each key independently.
+	// Queries like ?tags=a|b, ?tags=a,b, or ?name=x&tags=y will therefore behave differently for
+	// system providers than for storage-backed providers, and multi-key matches can append the same provider more than once.
+	// Please reuse the same AND/OR evaluation here instead of the bespoke matcher.
 	if IncludeSystemDefined(req) {
 		providers = h.filterSystemProviders(filter.ExtractQueryParams().Params)
 		ctx.Logger.Info(fmt.Sprintf("Included %d system defined providers", len(providers)))
