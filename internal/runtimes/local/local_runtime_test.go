@@ -27,7 +27,7 @@ type fakeStorage struct {
 	updateErr     error
 }
 
-func (f *fakeStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) error {
+func (f *fakeStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent, _ []api.BenchmarkConfig) error {
 	f.called = true
 	f.runStatus = runStatus
 	if f.runStatusChan != nil {
@@ -203,7 +203,7 @@ func TestLocalRuntimeName(t *testing.T) {
 }
 
 func TestNewLocalRuntime(t *testing.T) {
-	rt, err := NewLocalRuntime(discardLogger(), nil)
+	rt, err := NewLocalRuntime(discardLogger(), nil, nil)
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
