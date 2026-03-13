@@ -96,7 +96,7 @@ func main() {
 	}
 
 	// setup runtime
-	runtime, err := runtimes.NewRuntime(logger, serviceConfig, providerConfigs)
+	runtime, err := runtimes.NewRuntime(logger, serviceConfig, providerConfigs, collectionConfigs)
 	if err != nil {
 		// we do this as no point trying to continue
 		startUpFailed(serviceConfig, err, "Failed to create runtime", logger)
