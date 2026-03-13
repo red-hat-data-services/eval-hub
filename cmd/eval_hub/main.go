@@ -82,10 +82,17 @@ func main() {
 	}
 
 	// set up the provider configs
-	providerConfigs, err := config.LoadProviderConfigs(logger, args.ConfigDir)
+	providerConfigs, err := config.LoadProviderConfigs(logger, validate, args.ConfigDir)
 	if err != nil {
 		// we do this as no point trying to continue
 		startUpFailed(serviceConfig, err, "Failed to create provider configs", logger)
+	}
+
+	// set up the collection configs
+	collectionConfigs, err := config.LoadCollectionConfigs(logger, validate, args.ConfigDir)
+	if err != nil {
+		// we do this as no point trying to continue
+		startUpFailed(serviceConfig, err, "Failed to create collection configs", logger)
 	}
 
 	// setup runtime
@@ -126,6 +133,7 @@ func main() {
 	srv, err := server.NewServer(logger,
 		serviceConfig,
 		providerConfigs,
+		collectionConfigs,
 		authConfig,
 		storage,
 		validate,
