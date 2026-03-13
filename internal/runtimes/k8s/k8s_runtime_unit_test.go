@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -27,7 +28,7 @@ type fakeStorage struct {
 }
 
 // UpdateEvaluationJob implements [abstractions.Storage].
-func (f *fakeStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) error {
+func (f *fakeStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent, _ []api.BenchmarkConfig) error {
 	f.called = true
 	f.runStatus = runStatus
 	if f.runStatusChan != nil {
@@ -532,17 +533,18 @@ func TestRunEvaluationJobReturnsErrorWhenResolveBenchmarksFails(t *testing.T) {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	runtime := &K8sRuntime{
-		logger:    logger,
-		helper:    &KubernetesHelper{clientset: fake.NewSimpleClientset()},
-		providers: map[string]api.ProviderResource{},
-		ctx:       context.Background(),
+		logger:      logger,
+		helper:      &KubernetesHelper{clientset: fake.NewSimpleClientset()},
+		providers:   map[string]api.ProviderResource{},
+		collections: map[string]api.CollectionResource{},
+		ctx:         context.Background(),
 	}
 	err := runtime.RunEvaluationJob(evaluation, nil)
 	if err == nil {
-		t.Fatal("expected error when ResolveBenchmarks fails (collection set, storage nil), got nil")
+		t.Fatal("expected error when ResolveBenchmarks fails (collection not found), got nil")
 	}
-	if err.Error() != "collection is set but storage is not available for job job-1" {
-		t.Fatalf("expected ResolveBenchmarks error, got %q", err.Error())
+	if !strings.Contains(err.Error(), `collection "coll-1" not found`) {
+		t.Fatalf("expected collection not found error, got %q", err.Error())
 	}
 }
 
