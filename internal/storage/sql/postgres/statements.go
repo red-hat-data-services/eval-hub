@@ -88,13 +88,16 @@ func (s *postgresStatementsFactory) GetAllowedFilterColumns(tableName string) []
 	case shared.TABLE_PROVIDERS:
 		return allColumns // "benchmarks" and "system_defined" are not allowed filters for providers from the database
 	case shared.TABLE_COLLECTIONS:
-		return allColumns // "system_defined" is not allowed filter for collections from the database
+		return append(allColumns, "category") // "system_defined" is not allowed filter for collections from the database
 	default:
 		return nil
 	}
 }
 
 // entityFilterCondition returns the SQL condition and args for a filter key.
+// PostgreSQL includes two native operators: arrow operator ( -> ) and arrow-text operator (- >> ) to query JSONB documents.
+// The arrow operator -> returns a JSONB object field by key or array index and is suitable for navigating nested structures.
+// The arrow-text operator ->> returns the object field as plain text.
 func (s *postgresStatementsFactory) CreateEntityFilterCondition(key string, value any, index int, tableName string) (condition string, args []any) {
 	switch key {
 	case "name":
@@ -104,6 +107,14 @@ func (s *postgresStatementsFactory) CreateEntityFilterCondition(key string, valu
 			namePath = "entity->'config'->>'name'"
 		}
 		return fmt.Sprintf("%s = $%d", namePath, index), []any{value}
+	case "category":
+		if tableName == shared.TABLE_COLLECTIONS {
+			// collections: category at entity root
+			categoryPath := "entity->>'category'"
+			return fmt.Sprintf("%s = $%d", categoryPath, index), []any{value}
+		}
+		// should never get here as we validate the filter before calling this function
+		return "", []any{}
 	case "tags":
 		tagStr, _ := value.(string)
 		// evaluations: tags at config.tags; providers and collections: tags at entity root

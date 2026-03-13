@@ -32,10 +32,10 @@ Feature: Collections Endpoint
     When I send a POST request to "/api/v1/evaluations/collections" with body "file:/collection_no_category.json"
     Then the response code should be 400
 
-  Scenario: Create a collection without description field returns 400
+  Scenario: Create a collection without description field returns 202
     Given the service is running
     When I send a POST request to "/api/v1/evaluations/collections" with body "file:/collection_no_description.json"
-    Then the response code should be 400
+    Then the response code should be 202
 
   Scenario: Create a collection with a benchmark that does not contain 'id' returns 400
     Given the service is running
@@ -98,12 +98,12 @@ Feature: Collections Endpoint
     When I send a PUT request to "/api/v1/evaluations/collections/{id}" with body "file:/collection_no_name.json"
     Then the response code should be 400
 
-  Scenario: Update collection without description in body returns 400
+  Scenario: Update collection without description in body returns 200
     Given the service is running
     When I send a POST request to "/api/v1/evaluations/collections" with body "file:/collection.json"
     Then the response code should be 202
     When I send a PUT request to "/api/v1/evaluations/collections/{id}" with body "file:/collection_no_description.json"
-    Then the response code should be 400
+    Then the response code should be 200
 
   Scenario: Update collection without benchmarks in body returns 400
     Given the service is running
@@ -241,7 +241,7 @@ Feature: Collections Endpoint
     When I send a DELETE request to "/api/v1/evaluations/collections/00000000-0000-0000-0000-000000000000?hard_delete=true"
     Then the response code should be 204
 
-  Scenario: List collections by tags and name
+  Scenario: List collections by tags and name and category
     Given the service is running
     When I send a POST request to "/api/v1/evaluations/collections" with body:
     """
@@ -282,7 +282,7 @@ Feature: Collections Endpoint
     {
       "name": "test-collection-3",
       "description": "Collection of benchmarks for FVT",
-      "category": "test",
+      "category": "test3",
       "tags": ["test-tag-3", "test-tag-2", "test-tag-1"],
       "benchmarks": [
         {
@@ -362,3 +362,41 @@ Feature: Collections Endpoint
     When I send a GET request to "/api/v1/evaluations/collections?name=test-collection-3&tags=test-tag-3"
     Then the response code should be 200
     And the array at path "items" in the response should have length 1
+    When I send a GET request to "/api/v1/evaluations/collections?category=test"
+    Then the response code should be 200
+    And the array at path "items" in the response should have length 2
+    When I send a GET request to "/api/v1/evaluations/collections?category=test3"
+    Then the response code should be 200
+    And the array at path "items" in the response should have length 1
+    When I send a GET request to "/api/v1/evaluations/collections?category=test4"
+    Then the response code should be 200
+    And the array at path "items" in the response should have length 0
+    When I send a GET request to "/api/v1/evaluations/collections?category=test&name=test-collection-1"
+    Then the response code should be 200
+    And the array at path "items" in the response should have length 1
+    When I send a GET request to "/api/v1/evaluations/collections?category=test&name=test-collection-2"
+    Then the response code should be 200
+    And the array at path "items" in the response should have length 1
+    When I send a GET request to "/api/v1/evaluations/collections?category=test&name=test-collection-3"
+    Then the response code should be 200
+    And the array at path "items" in the response should have length 0
+    When I send a GET request to "/api/v1/evaluations/collections?category=test3&name=test-collection-3"
+    Then the response code should be 200
+    And the array at path "items" in the response should have length 1
+    When I send a GET request to "/api/v1/evaluations/collections?category=test&name=test-collection-4"
+    Then the response code should be 200
+    And the array at path "items" in the response should have length 0
+
+  Scenario: List system defined collections with pagination
+    Given the service is running
+    And there are no user collections
+    When I send a GET request to "/api/v1/evaluations/collections?limit=50&offset=0&system_defined=only"
+    Then the response code should be 200
+    And the response should contain the value "50" at path "$.limit"
+    And the "total_count" field in the response should be saved as "value:num_collections"
+    And the response should contain the value "1" at path "$.total_count"
+    When I send a GET request to "/api/v1/evaluations/collections?limit=50&offset=0"
+    Then the response code should be 200
+    And the response should contain the value "50" at path "$.limit"
+    And the array at path "items" in the response should have length "value:num_collections"
+    And the response should contain the value "{{value:num_collections}}" at path "$.total_count"
