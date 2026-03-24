@@ -1,10 +1,12 @@
-.PHONY: help autoupdate-precommit pre-commit clean build build-coverage start-service stop-service lint test test-fvt-server test-all test-coverage test-fvt-coverage test-fvt-server-coverage test-all-coverage install-deps update-deps get-deps fmt vet update-deps generate-public-docs verify-api-docs generate-ignore-file documentation check-unused-components fvt-report
+.PHONY: help autoupdate-precommit pre-commit clean build build-coverage build-service build-init build-sidecar build-all-platforms start-service stop-service start-sidecar stop-sidecar lint test test-fvt-server test-all test-coverage test-fvt-coverage test-fvt-server-coverage test-all-coverage install-deps update-deps get-deps fmt vet update-deps generate-public-docs verify-api-docs generate-ignore-file documentation check-unused-components fvt-report
 
 # Variables
 BINARY_NAME = eval-hub
-CMD_PATH = ./cmd/eval_hub
-INIT_BINARY_NAME = eval-hub-init
-INIT_CMD_PATH = ./cmd/eval_hub_init
+CMD_PATH = ./cmd/eval-hub
+INIT_BINARY_NAME = eval-runtime-init
+INIT_CMD_PATH = ./cmd/eval-runtime-init
+SIDECAR_BINARY_NAME = eval-runtime-sidecar
+SIDECAR_CMD_PATH = ./cmd/eval-runtime-sidecar
 BIN_DIR = bin
 PORT ?= 8080
 
@@ -49,13 +51,17 @@ FULL_BUILD_NUMBER ?= $(shell cat VERSION)
 LDFLAGS_X = -X "${BUILD_PACKAGE}.Build=${FULL_BUILD_NUMBER}" -X "${BUILD_PACKAGE}.BuildDate=$(DATE)"
 LDFLAGS = -buildmode=exe ${LDFLAGS_X}
 
-build: $(BIN_DIR) ## Build the binaries
+build-service: $(BIN_DIR) ## Build the service binary
 	@echo "Building $(BINARY_NAME) with ${LDFLAGS}"
 	@go build -race -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(BINARY_NAME) $(CMD_PATH)
 	@echo "Build complete: $(BIN_DIR)/$(BINARY_NAME)"
+
+build-init: $(BIN_DIR) ## Build the eval-runtime-init binary only
 	@echo "Building $(INIT_BINARY_NAME) with ${LDFLAGS}"
 	@go build -race -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(INIT_BINARY_NAME) $(INIT_CMD_PATH)
 	@echo "Build complete: $(BIN_DIR)/$(INIT_BINARY_NAME)"
+
+build: build-service build-init build-sidecar ## Build the binaries
 
 build-coverage: $(BIN_DIR) ## Build the binaries with coverage
 	@echo "Building $(BINARY_NAME)-cov with -cover -covermode=atomic -ldflags ${LDFLAGS} "
@@ -64,6 +70,9 @@ build-coverage: $(BIN_DIR) ## Build the binaries with coverage
 	@echo "Building $(INIT_BINARY_NAME)-cov with -cover -covermode=atomic -ldflags ${LDFLAGS} "
 	@go build -race -cover -covermode=atomic -coverpkg=./... -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(INIT_BINARY_NAME)-cov $(INIT_CMD_PATH)
 	@echo "Build complete: $(BIN_DIR)/$(INIT_BINARY_NAME)-cov"
+	@echo "Building $(SIDECAR_BINARY_NAME)-cov with -cover -covermode=atomic -ldflags ${LDFLAGS} "
+	@go build -race -cover -covermode=atomic -coverpkg=./... -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(SIDECAR_BINARY_NAME)-cov $(SIDECAR_CMD_PATH)
+	@echo "Build complete: $(BIN_DIR)/$(SIDECAR_BINARY_NAME)-cov"
 
 SERVER_PID_FILE ?= $(BIN_DIR)/pid
 
@@ -72,7 +81,7 @@ ${SERVER_PID_FILE}:
 
 SERVICE_LOG ?= $(BIN_DIR)/service.log
 
-start-service: ${SERVER_PID_FILE} build ## Run the application in background
+start-service: ${SERVER_PID_FILE} build-service ## Run the application in background
 	@echo "Running $(BINARY_NAME) on port $(PORT)..."
 	@./scripts/start_server.sh "${SERVER_PID_FILE}" "${BIN_DIR}/$(BINARY_NAME)" "${SERVICE_LOG}" ${PORT} ""
 
@@ -83,6 +92,26 @@ start-service-coverage: ${SERVER_PID_FILE} build-coverage ## Run the application
 stop-service:
 	-./scripts/stop_server.sh "${SERVER_PID_FILE}"
 	! grep -i -F panic "${SERVICE_LOG}"
+
+# Sidecar (eval-runtime-sidecar) starter/stopper
+SIDECAR_PID_FILE ?= $(BIN_DIR)/sidecar.pid
+SIDECAR_LOG ?= $(BIN_DIR)/sidecar.log
+SIDECAR_PORT ?= 8081
+# Config dir containing sidecar_runtime_local.json (or minimal JSON is generated from SIDECAR_PORT)
+SIDECAR_CONFIG_DIR ?= config
+
+build-sidecar: $(BIN_DIR) ## Build only the sidecar binary
+	@echo "Building $(SIDECAR_BINARY_NAME) with ${LDFLAGS}"
+	@go build -race -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(SIDECAR_BINARY_NAME) $(SIDECAR_CMD_PATH)
+	@echo "Build complete: $(BIN_DIR)/$(SIDECAR_BINARY_NAME)"
+
+start-sidecar: build-sidecar ## Run the sidecar in background (port $(SIDECAR_PORT), config from $(SIDECAR_CONFIG_DIR))
+	@rm -f "${SIDECAR_PID_FILE}" && true
+	@echo "Running $(SIDECAR_BINARY_NAME) on port $(SIDECAR_PORT) (config: $(SIDECAR_CONFIG_DIR))..."
+	@SIDECAR_PORT="$(SIDECAR_PORT)" ./scripts/start_sidecar.sh "${SIDECAR_PID_FILE}" "${BIN_DIR}/$(SIDECAR_BINARY_NAME)" "${SIDECAR_LOG}" "$(SIDECAR_PORT)" "$(SIDECAR_CONFIG_DIR)"
+
+stop-sidecar: ## Stop the sidecar
+	-./scripts/stop_server.sh "${SIDECAR_PID_FILE}"
 
 lint: ## Lint the code (runs go vet)
 	@echo "Linting code..."
@@ -104,9 +133,48 @@ test: ## Run unit tests
 	@bash -c 'set -o pipefail; go test -v ./auth/... ./internal/... ./cmd/... | ${PWD}/scripts/grcat ${PWD}/.conf.go-test'
 	@echo "Unit tests complete"
 
+test-coverage: $(BIN_DIR) ## Run unit tests with coverage
+	@echo "Running unit tests with coverage..."
+	@go test -v -race -coverprofile=$(BIN_DIR)/coverage.out -covermode=atomic ./internal/... ./cmd/...
+	@go test -v -race -coverprofile=$(BIN_DIR)/coverage-init.out -covermode=atomic ./cmd/eval-runtime-init
+	@go tool cover -html=$(BIN_DIR)/coverage.out -o $(BIN_DIR)/coverage.html
+	@go tool cover -html=$(BIN_DIR)/coverage-init.out -o $(BIN_DIR)/coverage-init.html
+	@echo "Coverage report generated: $(BIN_DIR)/coverage.html and $(BIN_DIR)/coverage-init.html"
+
+test-all: test test-fvt test-fvt-server ## Run all tests (unit + FVT)
+
+SERVER_URL ?= http://localhost:8080
+
+## ------------------------------------------------------------------------------------------------
+## FVT tests (Functional Verification Tests) using godog
+## ------------------------------------------------------------------------------------------------
+
+SERVER_URL ?= http://localhost:8080
+
+FVT_TESTS ?= ./tests/features/...
+FVT_OUTPUT ?= --godog.format=junit:${PWD}/$(BIN_DIR)/junit-fvt-report.xml,pretty
+
 test-fvt: $(BIN_DIR) ## Run FVT (Functional Verification Tests) using godog
 	@echo "Running FVT tests..."
-	@bash -c 'set -o pipefail; go test -v -race ./tests/features/... | ${PWD}/scripts/grcat ${PWD}/.conf.go-integration-test'
+	@bash -c 'set -o pipefail; go test ${FVT_TESTS} ${FVT_OUTPUT} -v -race | ${PWD}/scripts/grcat ${PWD}/.conf.go-integration-test'
+
+test-fvt-server: start-service ## Run FVT tests using godog against a running server
+	@SERVER_URL="${SERVER_URL}" make test-fvt; status=$$?; make stop-service; exit $$status
+
+test-fvt-coverage: $(BIN_DIR)## Run integration (FVT) tests with coverage
+	@echo "Running integration (FVT) tests with coverage..."
+	@go test ${FVT_TESTS} ${FVT_OUTPUT} -v -race -coverprofile=$(BIN_DIR)/coverage-fvt.out -covermode=atomic
+	@go tool cover -html=$(BIN_DIR)/coverage-fvt.out -o $(BIN_DIR)/coverage-fvt.html
+	@echo "Coverage report generated: $(BIN_DIR)/coverage-fvt.html"
+
+test-fvt-server-coverage: start-service-coverage ## Run FVT tests using godog against a running server with coverage
+	@echo "Running FVT tests with coverage against a running server..."
+	@GOCOVERDIR="${BIN_DIR}" SERVER_URL="${SERVER_URL}" make test-fvt; status=$$?; make stop-service; exit $$status
+	go tool covdata textfmt -i ${BIN_DIR} -o ${BIN_DIR}/coverage-fvt.out
+	@go tool cover -html=$(BIN_DIR)/coverage-fvt.out -o $(BIN_DIR)/coverage-fvt.html
+	@echo "Coverage report generated: $(BIN_DIR)/coverage-fvt.html"
+
+test-all-coverage: test-coverage test-fvt-server-coverage ## Run all tests (unit + FVT) with coverage
 
 fvt-report: ## Generate HTML report for FVT tests
 	@echo "Generating FVT JSON report..."
@@ -118,33 +186,9 @@ fvt-report: ## Generate HTML report for FVT tests
 	if [ -f cucumber-report.html ]; then echo "Report generated: cucumber-report.html"; else echo "Report not generated: cucumber-report.html"; fi; \
 	exit $$status
 
-test-all: test test-fvt test-fvt-server ## Run all tests (unit + FVT)
-
-SERVER_URL ?= http://localhost:8080
-
-test-fvt-server: start-service ## Run FVT tests using godog against a running server
-	@SERVER_URL="${SERVER_URL}" make test-fvt; status=$$?; make stop-service; exit $$status
-
-test-coverage: $(BIN_DIR) ## Run unit tests with coverage
-	@echo "Running unit tests with coverage..."
-	@go test -v -race -coverprofile=$(BIN_DIR)/coverage.out -covermode=atomic ./internal/... ./cmd/...
-	@go test -v -race -coverprofile=$(BIN_DIR)/coverage-init.out -covermode=atomic ./cmd/eval_hub_init
-	@go tool cover -html=$(BIN_DIR)/coverage.out -o $(BIN_DIR)/coverage.html
-	@go tool cover -html=$(BIN_DIR)/coverage-init.out -o $(BIN_DIR)/coverage-init.html
-	@echo "Coverage report generated: $(BIN_DIR)/coverage.html and $(BIN_DIR)/coverage-init.html"
-
-test-fvt-coverage: $(BIN_DIR)## Run integration (FVT) tests with coverage
-	@echo "Running integration (FVT) tests with coverage..."
-	@go test -v -race -coverprofile=$(BIN_DIR)/coverage-fvt.out -covermode=atomic ./tests/features/...
-	@go tool cover -html=$(BIN_DIR)/coverage-fvt.out -o $(BIN_DIR)/coverage-fvt.html
-	@echo "Coverage report generated: $(BIN_DIR)/coverage-fvt.html"
-
-test-fvt-server-coverage: start-service-coverage ## Run FVT tests using godog against a running server with coverage
-	@echo "Running FVT tests with coverage against a running server..."
-	@GOCOVERDIR="${BIN_DIR}" SERVER_URL="${SERVER_URL}" make test-fvt; status=$$?; make stop-service; exit $$status
-	go tool covdata textfmt -i ${BIN_DIR} -o ${BIN_DIR}/coverage-fvt.out
-
-test-all-coverage: test-coverage test-fvt-server-coverage ## Run all tests (unit + FVT) with coverage
+## ------------------------------------------------------------------------------------------------
+## Dependencies
+## ------------------------------------------------------------------------------------------------
 
 install-deps: ## Install dependencies
 	@command -v python3 >/dev/null 2>&1 || { echo "Error: Python 3 is required for make test (scripts/grcat). Install python3 and retry."; exit 1; }
@@ -164,6 +208,10 @@ get-deps: ## Get all dependencies
 	@go get ./...
 	@go get -t ./...
 	@echo "Dependencies updated"
+
+## ------------------------------------------------------------------------------------------------
+## Cross-compilation
+## ------------------------------------------------------------------------------------------------
 
 # Cross-compilation variables
 CROSS_OUTPUT_SUFFIX = $(CROSS_GOOS)-$(CROSS_GOARCH)
