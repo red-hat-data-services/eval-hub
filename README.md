@@ -4,6 +4,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/eval-hub/eval-hub.svg)](https://pkg.go.dev/github.com/eval-hub/eval-hub)
 [![Go Report Card](https://goreportcard.com/badge/github.com/eval-hub/eval-hub)](https://goreportcard.com/report/github.com/eval-hub/eval-hub)
 [![codecov](https://codecov.io/github/eval-hub/eval-hub/graph/badge.svg?token=LHJACCNC9A)](https://codecov.io/github/eval-hub/eval-hub)
+[![license](https://img.shields.io/badge/License-Apache2.0-blue.svg?plastic)](https://github.com/eval-hub/eval-hub/blob/main/LICENSE)
 
 A lightweight REST API service for orchestrating LLM evaluations across multiple backends. Written in Go, it routes evaluation requests to frameworks like lm-evaluation-harness, RAGAS, Garak, and GuideLLM orchestrated via a [complementary SDK](https://github.com/eval-hub/eval-hub-sdk), tracks experiments via MLflow, and runs natively on OpenShift.
 
@@ -129,7 +130,6 @@ All endpoints are versioned under `/api/v1`. Full specification at [eval-hub.git
 | `/api/v1/evaluations/jobs/{id}` | GET, DELETE | Get status or cancel a job |
 | `/api/v1/evaluations/collections` | GET, POST | List or create benchmark collections |
 | `/api/v1/evaluations/providers` | GET | List registered providers |
-| `/api/v1/evaluations/benchmarks` | GET | List available benchmarks |
 | `/api/v1/health` | GET | Health check |
 | `/metrics` | GET | Prometheus metrics |
 
@@ -164,7 +164,7 @@ Register the new provider by adding a YAML entry to the providers ConfigMap. No 
 
 ```
 eval-hub/
-├── cmd/eval_hub/          # Entry point and server setup
+├── cmd/eval-hub/          # Entry point (main binary)
 ├── internal/
 │   ├── handlers/          # HTTP request handlers
 │   ├── storage/           # Database abstraction (SQLite, PostgreSQL)
@@ -175,7 +175,7 @@ eval-hub/
 │   ├── metrics/           # Prometheus instrumentation
 │   └── logging/           # Structured logging (zap)
 ├── config/                # config.yaml and provider definitions
-├── api/                   # OpenAPI 3.1.0 specification
+├── docs/src/              # OpenAPI 3.1.0 specification (source of truth)
 ├── tests/features/        # BDD tests (godog)
 ├── Containerfile          # Multi-stage UBI9 container build
 └── Makefile               # Build, test, and dev targets
@@ -185,7 +185,7 @@ eval-hub/
 
 - [API documentation](https://eval-hub.github.io/eval-hub/) -- full endpoint reference
 - [CONTRIBUTING.md](./CONTRIBUTING.md) -- contribution guidelines
-- [OpenAPI spec](./api/openapi.yaml) -- machine-readable API definition
+- [OpenAPI spec](./docs/openapi.yaml) -- machine-readable API definition
 
 ## Licence
 

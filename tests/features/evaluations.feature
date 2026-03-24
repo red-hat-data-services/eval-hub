@@ -41,6 +41,7 @@ Feature: Evaluations Endpoint
     Then the response code should be 404
     And the response should contain the value "resource_not_found" at path "$.message_code"
 
+  @cluster
   Scenario: Create an evaluation job and wait for completion
     Given the service is running
     When the mode is local or CI then skip this scenario
@@ -66,17 +67,112 @@ Feature: Evaluations Endpoint
     When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_missing_model.json"
     Then the response code should be 400
 
+  Scenario: Get evaluation by non-existent id returns 404
+    Given the service is running
+    When I send a GET request to "/api/v1/evaluations/jobs/00000000-0000-0000-0000-000000000000"
+    Then the response code should be 404
+    And the response should contain the value "resource_not_found" at path "$.message_code"
+
+  Scenario: List evaluation jobs with invalid limit returns 400
+    Given the service is running
+    When I send a GET request to "/api/v1/evaluations/jobs?limit=-1"
+    Then the response code should be 400
+    And the response should contain the value "query_parameter_invalid" at path "$.message_code"
+
+  Scenario: List evaluation jobs with invalid offset returns 400
+    Given the service is running
+    When I send a GET request to "/api/v1/evaluations/jobs?offset=not-a-number"
+    Then the response code should be 400
+    And the response should contain the value "query_parameter_invalid" at path "$.message_code"
+
+  Scenario: List evaluation jobs with non-numeric limit returns 400
+    Given the service is running
+    When I send a GET request to "/api/v1/evaluations/jobs?limit=invalid"
+    Then the response code should be 400
+    And the response should contain the value "query_parameter_invalid" at path "$.message_code"
+
+  Scenario: Delete evaluation job with non-existent id returns 404
+    Given the service is running
+    When I send a DELETE request to "/api/v1/evaluations/jobs/00000000-0000-0000-0000-000000000000?hard_delete=true"
+    Then the response code should be 404
+    And the response should contain the value "resource_not_found" at path "$.message_code"
+
+  Scenario: Create evaluation job with invalid JSON returns 400
+    Given the service is running
+    When I send a POST request to "/api/v1/evaluations/jobs" with body:
+    """
+    { not valid json
+    """
+    Then the response code should be 400
+    And the response should contain the value "invalid_json_request" at path "$.message_code"
+
+  Scenario: Create evaluation job missing benchmarks
+    Given the service is running
+    When I send a POST request to "/api/v1/evaluations/jobs" with body:
+    """
+    {
+      "name": "test-evaluation-job",
+      "model": {
+        "url": "http://test.com",
+        "name": "test"
+      },
+      "benchmarks": [
+      ]
+    }
+    """
+    Then the response code should be 400
+    And the response should contain the value "request_validation_failed" at path "$.message_code"
+    And the response should contain the value "minimum one benchmark" at path "$.message"
+    When I send a POST request to "/api/v1/evaluations/jobs" with body:
+    """
+    {
+      "name": "test-evaluation-job",
+      "model": {
+        "url": "http://test.com",
+        "name": "test"
+      }
+    }
+    """
+    Then the response code should be 400
+    And the response should contain the value "request_validation_failed" at path "$.message_code"
+    And the response should contain the value "minimum one benchmark" at path "$.message"
+
   Scenario: Create evaluation job with invalid provider
     Given the service is running
     When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_invalid_provider.json"
     Then the response code should be 400
-    And the response should contain the value "request_field_invalid" at path "$.message_code"
+    And the response should contain the value "resource_does_not_exist" at path "$.message_code"
 
   Scenario: Create evaluation job with invalid benchmark
     Given the service is running
     When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_invalid_benchmark.json"
     Then the response code should be 400
-    And the response should contain the value "request_field_invalid" at path "$.message_code"
+    And the response should contain the value "resource_does_not_exist" at path "$.message_code"
+
+  Scenario: Create evaluation job with invalid collection and benchmarks
+    Given the service is running
+    When I send a POST request to "/api/v1/evaluations/jobs" with body:
+    """
+    {
+      "name": "test-evaluation-job",
+      "model": {
+        "url": "http://test.com",
+        "name": "test"
+      },
+      "collection": {
+        "id": "id_not_checked"
+      },
+      "benchmarks": [
+        {
+          "id": "arc_easy",
+          "provider_id": "lm_evaluation_harness"
+        }
+      ]
+    }
+    """
+    Then the response code should be 400
+    And the response should contain the value "request_validation_failed" at path "$.message_code"
+    And the response should contain the value "benchmarks or collection" at path "$.message"
 
   Scenario: Create evaluation job missing benchmark id
     Given the service is running
@@ -90,11 +186,12 @@ Feature: Evaluations Endpoint
     Then the response code should be 400
     And the response should contain the value "request_validation_failed" at path "$.message_code"
 
+  @cluster
   Scenario: Create evaluation job with Collection
     Given the service is running
     When the mode is local or CI then skip this scenario
     When I send a POST request to "/api/v1/evaluations/collections" with body "file:/collection.json"
-    Then the response code should be 202
+    Then the response code should be 201
     And the "resource.id" field in the response should be saved as "value:collection_id"
     When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_with_collection.json"
     Then the response code should be 202
@@ -305,7 +402,7 @@ Feature: Evaluations Endpoint
     Then the response code should be 201
     And the "resource.id" field in the response should be saved as "value:provider_id"
     When I send a POST request to "/api/v1/evaluations/collections" with body "file:/collection_pass_criteria_from_provider_test.json"
-    Then the response code should be 202
+    Then the response code should be 201
     And the "resource.id" field in the response should be saved as "value:collection_id"
     When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_pass_criteria_from_provider_test.json"
     Then the response code should be 202
@@ -335,13 +432,12 @@ Feature: Evaluations Endpoint
     And the response should contain the value "0.6" at path "$.results.benchmarks[?(@.id == &quot;pc_b2&quot;)].test.threshold"
     And the response should contain the value "0.84|0.85|0.86" at path "$.results.test.score"
     And the response should contain the value "true" at path "$.results.test.pass"
-
     And the response should contain the value "completed" at path "$.status.state"
-    When I send a DELETE request to "/api/v1/evaluations/jobs/{id}?hard_delete=true"
-    Then the response code should be 204
     When I send a DELETE request to "/api/v1/evaluations/collections/{{value:collection_id}}"
     Then the response code should be 204
     When I send a DELETE request to "/api/v1/evaluations/providers/{{value:provider_id}}"
+    Then the response code should be 204
+    When I send a DELETE request to "/api/v1/evaluations/jobs/{id}?hard_delete=true"
     Then the response code should be 204
 
   Scenario: Cancel running evaluation job (soft delete)
@@ -383,9 +479,10 @@ Feature: Evaluations Endpoint
     Then the response code should be 400
     And the response should contain the value "request_validation_failed" at path "$.message_code"
 
-  Scenario: Update evaluation job status for unknown id
+  Scenario: Update evaluation job status for unknown id returns 404
     Given the service is running
     When I send a POST request to "/api/v1/evaluations/jobs/unknown-id/events" with body "file:/evaluation_job_status_event_running.json"
+    Then the response code should be 404
 
   Scenario: List evaluation jobs filtered by status
     Given the service is running

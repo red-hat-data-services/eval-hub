@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Eval Hub
   description: API REST server for evaluation backend orchestration
-  version: 0.2.0
+  version: 0.3.0
   contact:
     name: API Support
   license:
@@ -252,14 +252,17 @@ paths:
             type: string
             title: Tags
           description: Tags to search for
-        - name: system_defined
+        - name: scope
           in: query
           required: false
           schema:
-            type: boolean
-            default: true
-            title: System defined providers
-          description: Set to false to exclude system defined providers
+            type: string
+            enum:
+              - system
+              - tenant
+            title: Scope of providers
+          description: |
+            Set to `system` to get only system defined providers, or `tenant` to get only user defined providers. If `scope` is not provided, both system and user defined providers will be returned.
       responses:
         '200':
           description: Successful Response
@@ -483,14 +486,17 @@ paths:
             type: string
             title: Tags
           description: Tags to search for
-        - name: system_defined
+        - name: scope
           in: query
           required: false
           schema:
-            type: boolean
-            default: true
-            title: System defined collections
-          description: Set to false to exclude system defined collections
+            type: string
+            enum:
+              - system
+              - tenant
+            title: Scope of collections
+          description: |
+            Set to `system` to get only system defined collections, or `tenant` to get only user defined collections. If `scope` is not provided, both system and user defined collections will be returned.
       responses:
         '200':
           description: Successful Response
@@ -743,9 +749,6 @@ components:
           type: string
           format: date-time
           description: Last update timestamp
-        read_only:
-          type: boolean
-          description: Whether the resource is read-only
         owner:
           type: string
           description: Owner of the resource
@@ -938,15 +941,33 @@ components:
         auth:
           $ref: '#/components/schemas/ModelAuth'
           description: The model authentication configuration
-    PassCriteria:
+    EvaluationJobConfigCommon1:
       type: object
-      description: Pass/fail threshold criteria
+      title: EvaluationJobConfigCommon1
+      description: |
+        The evaluation job request configuration.
+      required:
+        - name
+        - model
       properties:
-        threshold:
-          type: number
-          format: float
-          default: 0
-          description: Threshold value
+        name:
+          type: string
+          description: |
+            The evaluation job name.
+        description:
+          type: string
+          description: |
+            The evaluation job description.
+        tags:
+          type: array
+          items:
+            type: string
+          description: |
+            The evaluation job tags.
+        model:
+          $ref: '#/components/schemas/ModelRef'
+          description: |
+            The model to evaluate.
     Ref:
       type: object
       description: Reference by ID
@@ -967,6 +988,15 @@ components:
           type: boolean
           default: false
           description: Whether lower values indicate better performance
+    PassCriteria:
+      type: object
+      description: Pass/fail threshold criteria
+      properties:
+        threshold:
+          type: number
+          format: float
+          default: 0
+          description: Threshold value
     TestDataRefS3:
       type: object
       description: S3 test data reference
@@ -1122,60 +1152,80 @@ components:
             The OCI artifact export configuration.
       additionalProperties: false
       title: EvaluationExports
-    EvaluationJobConfig:
+    EvaluationJobConfigCommon2:
       type: object
+      title: EvaluationJobConfigCommon2
       description: |
         The evaluation job request configuration.
-      required:
-        - name
-        - model
       properties:
-        name:
-          type: string
-          description: |
-            The evaluation job name.
-        description:
-          type: string
-          description: |
-            The evaluation job description.
-        tags:
-          type: array
-          items:
-            type: string
-          description: |
-            The evaluation job tags.
-        model:
-          $ref: '#/components/schemas/ModelRef'
-          description: |
-            The model to evaluate.
         pass_criteria:
           $ref: '#/components/schemas/PassCriteria'
           description: |
             The overall pass criteria for the evaluation job.
-        benchmarks:
-          type: array
-          items:
-            $ref: '#/components/schemas/BenchmarkConfig'
-          description: |
-            The evaluation benchmarks to run. Either `benchmarks` or `collection` must be provided, but not both.
-        collection:
-          $ref: '#/components/schemas/Ref'
-          description: |
-            Optional collection reference. When provided, the benchmarks will be taken from the collection. Either `benchmarks` or `collection` must be provided, but not both.
         experiment:
           $ref: '#/components/schemas/ExperimentConfig'
           description: |
             The MLFlow experiment configuration. When provided, the evaluation job will be tracked in MLFlow.
+        exports:
+          $ref: '#/components/schemas/EvaluationExports'
+          description: |
+            Optional exports configuration for the evaluation job. When provided, the evaluation job results will be exported to the specified location.
         custom:
           type: object
           additionalProperties: true
           description: |
             Custom request data. This can be used for user specific job data.
-        exports:
-          $ref: '#/components/schemas/EvaluationExports'
+    EvaluationJobConfigBenchmarks:
+      allOf:
+        - $ref: '#/components/schemas/EvaluationJobConfigCommon1'
+        - type: object
+          required:
+            - benchmarks
+          properties:
+            benchmarks:
+              type: array
+              items:
+                $ref: '#/components/schemas/BenchmarkConfig'
+              description: |
+                The evaluation benchmarks to run.
+        - $ref: '#/components/schemas/EvaluationJobConfigCommon2'
+      title: EvaluationJobConfigBenchmarks
+    CollectionRef:
+      type: object
+      description: |
+        The collection to use for the evaluation job.
+      required:
+        - id
+      properties:
+        id:
+          type: string
           description: |
-            Optional exports configuration for the evaluation job. When provided, the evaluation job results will be exported to the specified location.
+            The unique identifier of the collection.
+        benchmarks:
+          type: array
+          items:
+            $ref: '#/components/schemas/BenchmarkConfig'
+          description: |
+            The benchmarks supported by this collection. If a benchmark is specified but is not supported by the collection, the evaluation job will fail. This is needed in order to allow overriding the collection benchmarks for a specific evaluation job.
+    EvaluationJobConfigCollection:
+      allOf:
+        - $ref: '#/components/schemas/EvaluationJobConfigCommon1'
+        - type: object
+          required:
+            - collection
+          properties:
+            collection:
+              $ref: '#/components/schemas/CollectionRef'
+        - $ref: '#/components/schemas/EvaluationJobConfigCommon2'
+      title: EvaluationJobConfigCollection
+    EvaluationJobConfig:
+      type: object
       title: EvaluationJobConfig
+      description: |
+        The evaluation job request configuration.
+      oneOf:
+        - $ref: '#/components/schemas/EvaluationJobConfigBenchmarks'
+        - $ref: '#/components/schemas/EvaluationJobConfigCollection'
     EvaluationJobResource:
       type: object
       description: Full evaluation job resource (response)
