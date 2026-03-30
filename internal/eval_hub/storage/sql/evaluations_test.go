@@ -196,7 +196,7 @@ func TestUpdateEvaluationJob_PreservesProviderID(t *testing.T) {
 		},
 	}
 
-	err = store.UpdateEvaluationJob(job.Resource.ID, statusUpdate, nil)
+	err = store.UpdateEvaluationJob(job.Resource.ID, statusUpdate)
 	if err != nil {
 		t.Fatalf("Failed to update job: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestUpdateEvaluationJob_PreservesProviderID(t *testing.T) {
 		},
 	}
 
-	err = store.UpdateEvaluationJob(job.Resource.ID, completionUpdate, nil)
+	err = store.UpdateEvaluationJob(job.Resource.ID, completionUpdate)
 	if err != nil {
 		t.Fatalf("Failed to update job with results: %v", err)
 	}
@@ -435,7 +435,7 @@ func TestEvaluationsStorage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to validate status: %v", err)
 		}
-		err = store.UpdateEvaluationJob(evaluationId, status, nil)
+		err = store.UpdateEvaluationJob(evaluationId, status)
 		if err != nil {
 			t.Fatalf("Failed to update evaluation job: %v", err)
 		}
@@ -466,14 +466,14 @@ func TestEvaluationsStorage(t *testing.T) {
 		}
 	})
 
-	t.Run("UpdateEvaluationJobStatus same-state is no-op", func(t *testing.T) {
-		noOpID := common.GUID()
+	t.Run("UpdateEvaluationJobStatus running to pending updates state", func(t *testing.T) {
+		jobID := common.GUID()
 		now := time.Now()
 
-		noOpJob := &api.EvaluationJobResource{
+		jobRes := &api.EvaluationJobResource{
 			Resource: api.EvaluationResource{
 				Resource: api.Resource{
-					ID:        noOpID,
+					ID:        jobID,
 					Tenant:    api.Tenant("tenant-1"),
 					CreatedAt: now,
 					UpdatedAt: now,
@@ -494,20 +494,109 @@ func TestEvaluationsStorage(t *testing.T) {
 				Benchmarks: []api.BenchmarkConfig{{Ref: api.Ref{ID: "b"}, ProviderID: "p"}},
 			},
 		}
-		if err := store.CreateEvaluationJob(noOpJob); err != nil {
+		if err := store.CreateEvaluationJob(jobRes); err != nil {
 			t.Fatalf("CreateEvaluationJob: %v", err)
 		}
-		msg := &api.MessageInfo{Message: "no change", MessageCode: "test"}
-		err := store.UpdateEvaluationJobStatus(noOpID, api.OverallStatePending, msg)
+		msg := &api.MessageInfo{Message: "now pending", MessageCode: "test"}
+		err := store.UpdateEvaluationJobStatus(jobID, api.OverallStatePending, msg)
 		if err != nil {
-			t.Fatalf("UpdateEvaluationJobStatus same-state should not error: %v", err)
+			t.Fatalf("UpdateEvaluationJobStatus running->pending: %v", err)
 		}
-		job, err := store.GetEvaluationJob(noOpID)
+		got, err := store.GetEvaluationJob(jobID)
 		if err != nil {
 			t.Fatalf("GetEvaluationJob failed: %v", err)
 		}
-		if job.Status.State != api.OverallStatePending {
-			t.Errorf("state should remain pending, got %s", job.Status.State)
+		if got.Status.State != api.OverallStatePending {
+			t.Errorf("state should be pending, got %s", got.Status.State)
+		}
+	})
+
+	t.Run("UpdateEvaluationJobStatus same-state persists message when message changes", func(t *testing.T) {
+		jobID := common.GUID()
+		now := time.Now()
+		initialMsg := &api.MessageInfo{Message: "Evaluation job created", MessageCode: "created"}
+
+		j := &api.EvaluationJobResource{
+			Resource: api.EvaluationResource{
+				Resource: api.Resource{
+					ID:        jobID,
+					Tenant:    api.Tenant("tenant-1"),
+					CreatedAt: now,
+					UpdatedAt: now,
+				},
+				MLFlowExperimentID: "experiment-1",
+			},
+			Status: &api.EvaluationJobStatus{
+				EvaluationJobState: api.EvaluationJobState{
+					State:   api.OverallStatePending,
+					Message: initialMsg,
+				},
+			},
+			EvaluationJobConfig: api.EvaluationJobConfig{
+				Model:      api.ModelRef{URL: "http://test.com", Name: "test"},
+				Benchmarks: []api.BenchmarkConfig{{Ref: api.Ref{ID: "b"}, ProviderID: "p"}},
+			},
+		}
+		if err := store.CreateEvaluationJob(j); err != nil {
+			t.Fatalf("CreateEvaluationJob: %v", err)
+		}
+		newMsg := &api.MessageInfo{
+			Message:     "Evaluation job created but no runtime configured",
+			MessageCode: "updated",
+		}
+		if err := store.UpdateEvaluationJobStatus(jobID, api.OverallStatePending, newMsg); err != nil {
+			t.Fatalf("UpdateEvaluationJobStatus same-state message: %v", err)
+		}
+		got, err := store.GetEvaluationJob(jobID)
+		if err != nil {
+			t.Fatalf("GetEvaluationJob: %v", err)
+		}
+		if got.Status.State != api.OverallStatePending {
+			t.Fatalf("state should stay pending, got %s", got.Status.State)
+		}
+		if got.Status.Message == nil || got.Status.Message.Message != newMsg.Message || got.Status.Message.MessageCode != newMsg.MessageCode {
+			t.Fatalf("message not updated: %+v", got.Status.Message)
+		}
+	})
+
+	t.Run("UpdateEvaluationJobStatus same-state nil message is no-op", func(t *testing.T) {
+		jobID := common.GUID()
+		now := time.Now()
+		keepMsg := &api.MessageInfo{Message: "unchanged", MessageCode: "K"}
+
+		j := &api.EvaluationJobResource{
+			Resource: api.EvaluationResource{
+				Resource: api.Resource{
+					ID:        jobID,
+					Tenant:    api.Tenant("tenant-1"),
+					CreatedAt: now,
+					UpdatedAt: now,
+				},
+				MLFlowExperimentID: "experiment-1",
+			},
+			Status: &api.EvaluationJobStatus{
+				EvaluationJobState: api.EvaluationJobState{
+					State:   api.OverallStatePending,
+					Message: keepMsg,
+				},
+			},
+			EvaluationJobConfig: api.EvaluationJobConfig{
+				Model:      api.ModelRef{URL: "http://test.com", Name: "test"},
+				Benchmarks: []api.BenchmarkConfig{{Ref: api.Ref{ID: "b"}, ProviderID: "p"}},
+			},
+		}
+		if err := store.CreateEvaluationJob(j); err != nil {
+			t.Fatalf("CreateEvaluationJob: %v", err)
+		}
+		if err := store.UpdateEvaluationJobStatus(jobID, api.OverallStatePending, nil); err != nil {
+			t.Fatalf("UpdateEvaluationJobStatus: %v", err)
+		}
+		got, err := store.GetEvaluationJob(jobID)
+		if err != nil {
+			t.Fatalf("GetEvaluationJob: %v", err)
+		}
+		if got.Status.Message == nil || got.Status.Message.Message != keepMsg.Message {
+			t.Fatalf("message should be unchanged, got %+v", got.Status.Message)
 		}
 	})
 
@@ -562,7 +651,7 @@ func TestEvaluationsStorage(t *testing.T) {
 						ID: "b1", ProviderID: "p1", BenchmarkIndex: 0,
 						Status: api.StateCompleted,
 					},
-				}, nil); err != nil {
+				}); err != nil {
 					t.Fatalf("setup for %s: %v", terminalState, err)
 				}
 			case api.OverallStateFailed:
@@ -572,7 +661,7 @@ func TestEvaluationsStorage(t *testing.T) {
 						Status:       api.StateFailed,
 						ErrorMessage: &api.MessageInfo{Message: "err", MessageCode: "E"},
 					},
-				}, nil); err != nil {
+				}); err != nil {
 					t.Fatalf("setup for %s: %v", terminalState, err)
 				}
 			case api.OverallStateCancelled:
@@ -585,7 +674,7 @@ func TestEvaluationsStorage(t *testing.T) {
 						ID: "b1", ProviderID: "p1", BenchmarkIndex: 0,
 						Status: api.StateCompleted,
 					},
-				}, nil); err != nil {
+				}); err != nil {
 					t.Fatalf("setup for %s (b1): %v", terminalState, err)
 				}
 				if err := store.UpdateEvaluationJob(jobID, &api.StatusEvent{
@@ -594,7 +683,7 @@ func TestEvaluationsStorage(t *testing.T) {
 						Status:       api.StateFailed,
 						ErrorMessage: &api.MessageInfo{Message: "err", MessageCode: "E"},
 					},
-				}, nil); err != nil {
+				}); err != nil {
 					t.Fatalf("setup for %s (b2): %v", terminalState, err)
 				}
 			}
@@ -670,7 +759,7 @@ func TestEvaluationsStorage(t *testing.T) {
 				Status:  api.StateCompleted,
 				Metrics: map[string]any{"acc": 0.9},
 			},
-		}, nil); err != nil {
+		}); err != nil {
 			t.Fatalf("UpdateEvaluationJob completed: %v", err)
 		}
 		// Now run UpdateEvaluationJobStatus: running->cancelled not applicable (job is completed).
@@ -706,7 +795,7 @@ func TestEvaluationsStorage(t *testing.T) {
 				ID: "bx", ProviderID: "garak", BenchmarkIndex: 0,
 				Status: api.StateRunning,
 			},
-		}, nil); err != nil {
+		}); err != nil {
 			t.Fatalf("UpdateEvaluationJob job2 running: %v", err)
 		}
 		if err := store.UpdateEvaluationJobStatus(jobID2, api.OverallStateCancelled, &api.MessageInfo{Message: "cancelled", MessageCode: "C"}); err != nil {
@@ -769,7 +858,7 @@ func TestEvaluationsStorage(t *testing.T) {
 				ID: "b1", ProviderID: "prov1", BenchmarkIndex: 0,
 				Status: api.StateRunning,
 			},
-		}, nil); err != nil {
+		}); err != nil {
 			t.Fatalf("UpdateEvaluationJob b1 running: %v", err)
 		}
 		if err := store.UpdateEvaluationJob(jobID, &api.StatusEvent{
@@ -778,7 +867,7 @@ func TestEvaluationsStorage(t *testing.T) {
 				Status:  api.StateCompleted,
 				Metrics: map[string]any{"acc": 0.95},
 			},
-		}, nil); err != nil {
+		}); err != nil {
 			t.Fatalf("UpdateEvaluationJob b2 completed: %v", err)
 		}
 		if err := store.UpdateEvaluationJob(jobID, &api.StatusEvent{
@@ -786,7 +875,7 @@ func TestEvaluationsStorage(t *testing.T) {
 				ID: "b3", ProviderID: "prov3", BenchmarkIndex: 2,
 				Status: api.StatePending,
 			},
-		}, nil); err != nil {
+		}); err != nil {
 			t.Fatalf("UpdateEvaluationJob b3 pending: %v", err)
 		}
 

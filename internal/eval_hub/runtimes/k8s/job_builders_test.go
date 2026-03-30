@@ -97,9 +97,26 @@ func TestBuildK8sNameDiffersAcrossGUIDs(t *testing.T) {
 }
 
 func TestJobLabelsSanitizeBenchmarkID(t *testing.T) {
-	labels := jobLabels("job-123", "lighteval", "arc:easy")
+	labels := jobLabels("job-123", "lighteval", "arc:easy", 0, "", "")
 	if labels[labelBenchmarkIDKey] != "arc-easy" {
 		t.Fatalf("expected benchmark label to be sanitized, got %q", labels[labelBenchmarkIDKey])
+	}
+	if labels[labelBenchmarkIndexKey] != "0" {
+		t.Fatalf("expected benchmark_index label %q, got %q", "0", labels[labelBenchmarkIndexKey])
+	}
+}
+
+func TestJobLabelsEvalHubInstance(t *testing.T) {
+	labels := jobLabels("j", "p", "b", 0, "my-evalhub", "prod-ns")
+	if labels[labelEvalHubInstanceNameKey] != "my-evalhub" {
+		t.Fatalf("instance-name: got %q", labels[labelEvalHubInstanceNameKey])
+	}
+	if labels[labelEvalHubInstanceNamespaceKey] != "prod-ns" {
+		t.Fatalf("instance-namespace: got %q", labels[labelEvalHubInstanceNamespaceKey])
+	}
+	empty := jobLabels("j", "p", "b", 0, "", "")
+	if _, ok := empty[labelEvalHubInstanceNameKey]; ok {
+		t.Fatal("expected no instance labels when name/namespace empty")
 	}
 }
 
@@ -117,6 +134,78 @@ func TestBuildJobRequiresAdapterImage(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected error for missing adapter image")
 	}
+}
+
+func TestBuildJobAdapterEvalHubModeEnv(t *testing.T) {
+	t.Run("k8s when not local mode", func(t *testing.T) {
+		cfg := &jobConfig{
+			jobID:          "job-mode",
+			resourceGUID:   "guid-mode",
+			benchmarkIndex: 0,
+			namespace:      "default",
+			providerID:     "provider-1",
+			benchmarkID:    "bench-1",
+			adapterImage:   "adapter:latest",
+			defaultEnv:     []api.EnvVar{},
+			localMode:      false,
+		}
+		job, err := buildJob(cfg)
+		if err != nil {
+			t.Fatalf("buildJob: %v", err)
+		}
+		adapter := job.Spec.Template.Spec.Containers[0]
+		var got string
+		var found bool
+		for _, e := range adapter.Env {
+			if e.Name == envEvalHubModeName {
+				found = true
+				got = e.Value
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("adapter missing env %q", envEvalHubModeName)
+		}
+		if got != "k8s" {
+			t.Fatalf("EVALHUB_MODE = %q, want k8s", got)
+		}
+	})
+	t.Run("local when local mode", func(t *testing.T) {
+		cfg := &jobConfig{
+			jobID:          "job-mode-local",
+			resourceGUID:   "guid-mode-l",
+			benchmarkIndex: 0,
+			namespace:      "default",
+			providerID:     "provider-1",
+			benchmarkID:    "bench-1",
+			adapterImage:   "adapter:latest",
+			defaultEnv:     []api.EnvVar{},
+			localMode:      true,
+		}
+		job, err := buildJob(cfg)
+		if err != nil {
+			t.Fatalf("buildJob: %v", err)
+		}
+		if len(job.Spec.Template.Spec.Containers) != 1 {
+			t.Fatalf("expected single adapter container in local mode, got %d", len(job.Spec.Template.Spec.Containers))
+		}
+		adapter := job.Spec.Template.Spec.Containers[0]
+		var got string
+		var found bool
+		for _, e := range adapter.Env {
+			if e.Name == envEvalHubModeName {
+				found = true
+				got = e.Value
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("adapter missing env %q", envEvalHubModeName)
+		}
+		if got != "local" {
+			t.Fatalf("EVALHUB_MODE = %q, want local", got)
+		}
+	})
 }
 
 func TestBuildJobSecurityContext(t *testing.T) {
