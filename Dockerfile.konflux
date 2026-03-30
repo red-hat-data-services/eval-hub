@@ -29,6 +29,20 @@ RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} GOEXPERIMENT=stri
     -o eval-hub \
     ./cmd/eval_hub
 
+# Build eval-runtime-sidecar binary (same image can run either via container command override)
+RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} GOEXPERIMENT=strictfipsruntime go build \
+    -ldflags="-w -s -X '${BUILD_PACKAGE}.Build=${BUILD_NUMBER}' -X '${BUILD_PACKAGE}.BuildDate=${BUILD_DATE}'" \
+    -a -installsuffix cgo \
+    -o eval-runtime-sidecar \
+    ./cmd/eval_runtime_sidecar
+
+# Build the eval runtime init binary (S3 test-data download)
+RUN CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} GOEXPERIMENT=strictfipsruntime go build \
+    -ldflags="-w -s -X '${BUILD_PACKAGE}.Build=${BUILD_NUMBER}' -X '${BUILD_PACKAGE}.BuildDate=${BUILD_DATE}'" \
+    -a -installsuffix cgo \
+    -o eval-runtime-init \
+    ./cmd/eval_runtime_init
+
 # Runtime stage
 FROM registry.access.redhat.com/ubi9/ubi-minimal@sha256:83006d535923fcf1345067873524a3980316f51794f01d8655be55d6e9387183
 
@@ -38,13 +52,16 @@ RUN groupadd -g 1000 evalhub && \
     mkdir -p /app/config && \
     chown -R evalhub:evalhub /app
 
-# Copy binary from builder
+# Copy binaries from builder
 COPY --from=builder --chown=evalhub:evalhub /build/eval-hub /app/eval-hub
+COPY --from=builder --chown=evalhub:evalhub /build/eval-runtime-sidecar /app/eval-runtime-sidecar
+COPY --from=builder --chown=evalhub:evalhub /build/eval-runtime-init /app/eval-runtime-init
 
 
 # The config file should not really be part of the image.
 COPY --chown=evalhub:evalhub config/config.yaml /app/config/config.yaml
 COPY --chown=evalhub:evalhub config/providers /app/config/providers
+COPY --chown=evalhub:evalhub config/collections /app/config/collections
 
 # Set working directory
 WORKDIR /app
