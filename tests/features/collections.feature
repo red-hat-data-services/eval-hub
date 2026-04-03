@@ -17,6 +17,7 @@ Feature: Collections Endpoint
     And the response should contain "name"
     And the response should contain "benchmarks"
     And the array at path "benchmarks" in the response should have length 1
+    And the response should contain the value "3" at path "benchmarks[0].parameters.weight"
 
   Scenario: Create a collection without benchmarks field returns 400
     Given the service is running
@@ -414,9 +415,9 @@ Feature: Collections Endpoint
     Then the response code should be 200
     And the response should contain the value "50" at path "$.limit"
     And the "total_count" field in the response should be saved as "value:num_collections"
-    And the response should contain the value "1" at path "$.total_count"
-    When I send a GET request to "/api/v1/evaluations/collections?limit=50&offset=0"
+    And the response should contain at least the value "3" at path "$.total_count"
+    When I send a GET request to "/api/v1/evaluations/collections?limit={{value:num_collections}}&offset=0"
     Then the response code should be 200
-    And the response should contain the value "50" at path "$.limit"
+    And the response should contain the value "{{value:num_collections}}" at path "$.limit"
     And the array at path "items" in the response should have length "value:num_collections"
-    And the response should contain the value "{{value:num_collections}}" at path "$.total_count"
+    And the response should contain at least the value "{{value:num_collections}}" at path "$.total_count"

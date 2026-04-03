@@ -103,7 +103,7 @@ type TestDataRef struct {
 type EvaluationBenchmarkConfig struct {
 	Ref          `mapstructure:",squash"`
 	ProviderID   string         `mapstructure:"provider_id" json:"provider_id" validate:"required"`
-	Weight       float32        `mapstructure:"weight" json:"weight,omitempty" validate:"omitempty,min=0,max=1"`
+	Weight       float32        `mapstructure:"weight" json:"weight,omitempty" validate:"omitempty,min=0"`
 	PrimaryScore *PrimaryScore  `mapstructure:"primary_score" json:"primary_score,omitempty"`
 	PassCriteria *PassCriteria  `mapstructure:"pass_criteria" json:"pass_criteria,omitempty"`
 	Parameters   map[string]any `mapstructure:"parameters" json:"parameters,omitempty"`
@@ -221,6 +221,13 @@ type CollectionRef struct {
 	Benchmarks []EvaluationBenchmarkConfig `json:"benchmarks,omitempty" validate:"omitempty,dive"`
 }
 
+// QueueConfig represents an optional scheduling queue for evaluation jobs.
+// When Kind is empty, the evaluation job API handler normalizes it to "kueue" before persist/runtime.
+type QueueConfig struct {
+	Kind string `json:"kind,omitempty" validate:"omitempty,oneof=kueue"`
+	Name string `json:"name" validate:"required"`
+}
+
 // EvaluationJobConfig represents evaluation job request schema
 type EvaluationJobConfig struct {
 	Name         string                      `json:"name" validate:"required"`
@@ -233,6 +240,7 @@ type EvaluationJobConfig struct {
 	Experiment   *ExperimentConfig           `json:"experiment,omitempty"`
 	Custom       *map[string]any             `json:"custom,omitempty"`
 	Exports      *EvaluationExports          `json:"exports,omitempty"`
+	Queue        *QueueConfig                `json:"queue,omitempty"`
 }
 
 type EvaluationResource struct {
