@@ -66,6 +66,9 @@ type jobConfig struct {
 	testDataS3           s3TestDataConfig
 	testDataInitImage    string
 	sidecarConfig        *config.SidecarConfig
+	// queueKind and queueName come from evaluation.Queue when set (API layer normalizes empty kind to kueue).
+	queueKind string
+	queueName string
 }
 
 type s3TestDataConfig struct {
@@ -166,6 +169,12 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 		testDataS3SecretRef = strings.TrimSpace(benchmarkConfig.TestDataRef.S3.SecretRef)
 	}
 
+	var queueKind, queueName string
+	if evaluation.Queue != nil {
+		queueName = strings.TrimSpace(evaluation.Queue.Name)
+		queueKind = strings.TrimSpace(evaluation.Queue.Kind)
+	}
+
 	out := &jobConfig{
 		jobID:                evaluation.Resource.ID,
 		resourceGUID:         uuid.NewString(),
@@ -193,6 +202,8 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 		sidecarBaseURL:       sidecarBaseURL,
 		localMode:            localMode,
 		evalHubURL:           evalHubURL,
+		queueKind:            queueKind,
+		queueName:            queueName,
 		testDataS3: s3TestDataConfig{
 			bucket:    testDataS3Bucket,
 			key:       testDataS3Key,

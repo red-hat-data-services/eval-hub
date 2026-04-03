@@ -39,15 +39,49 @@ type fakeStorage struct {
 	collectionConfigs map[string]api.CollectionResource
 }
 
-func (f *fakeStorage) WithLogger(_ *slog.Logger) abstractions.Storage { return f }
+func (f *fakeStorage) WithLogger(_ *slog.Logger) abstractions.Storage {
+	return &fakeStorage{
+		Storage:           f.Storage,
+		lastStatusID:      f.lastStatusID,
+		lastStatus:        f.lastStatus,
+		job:               f.job,
+		deleteID:          f.deleteID,
+		providerConfigs:   f.providerConfigs,
+		collectionConfigs: f.collectionConfigs,
+	}
+}
 func (f *fakeStorage) WithContext(_ context.Context) abstractions.Storage {
-	return f
+	return &fakeStorage{
+		Storage:           f.Storage,
+		lastStatusID:      f.lastStatusID,
+		lastStatus:        f.lastStatus,
+		job:               f.job,
+		deleteID:          f.deleteID,
+		providerConfigs:   f.providerConfigs,
+		collectionConfigs: f.collectionConfigs,
+	}
 }
 func (f *fakeStorage) WithTenant(_ api.Tenant) abstractions.Storage {
-	return f
+	return &fakeStorage{
+		Storage:           f.Storage,
+		lastStatusID:      f.lastStatusID,
+		lastStatus:        f.lastStatus,
+		job:               f.job,
+		deleteID:          f.deleteID,
+		providerConfigs:   f.providerConfigs,
+		collectionConfigs: f.collectionConfigs,
+	}
 }
 func (f *fakeStorage) WithOwner(_ api.User) abstractions.Storage {
-	return f
+	return &fakeStorage{
+		Storage:           f.Storage,
+		lastStatusID:      f.lastStatusID,
+		lastStatus:        f.lastStatus,
+		job:               f.job,
+		deleteID:          f.deleteID,
+		providerConfigs:   f.providerConfigs,
+		collectionConfigs: f.collectionConfigs,
+	}
 }
 
 func (f *fakeStorage) CreateEvaluationJob(_ *api.EvaluationJobResource) error {
@@ -199,6 +233,42 @@ func TestResolveProvider_NotFound(t *testing.T) {
 	if !strings.Contains(err.Error(), "provider resource 'missing' was not found") {
 		t.Fatalf("expected: provider resource 'missing' was not found, got %q", err.Error())
 	}
+}
+
+func TestApplyEvaluationJobQueueDefaults(t *testing.T) {
+	t.Parallel()
+	t.Run("nil config", func(t *testing.T) {
+		t.Parallel()
+		handlers.ApplyEvaluationJobQueueDefaults(nil)
+	})
+	t.Run("nil queue", func(t *testing.T) {
+		t.Parallel()
+		cfg := &api.EvaluationJobConfig{}
+		handlers.ApplyEvaluationJobQueueDefaults(cfg)
+		if cfg.Queue != nil {
+			t.Fatal("expected Queue to stay nil")
+		}
+	})
+	t.Run("empty kind defaults to kueue", func(t *testing.T) {
+		t.Parallel()
+		cfg := &api.EvaluationJobConfig{
+			Queue: &api.QueueConfig{Name: "  q1  ", Kind: "  "},
+		}
+		handlers.ApplyEvaluationJobQueueDefaults(cfg)
+		if cfg.Queue.Kind != "kueue" || cfg.Queue.Name != "q1" {
+			t.Fatalf("got kind %q name %q", cfg.Queue.Kind, cfg.Queue.Name)
+		}
+	})
+	t.Run("preserves explicit kind", func(t *testing.T) {
+		t.Parallel()
+		cfg := &api.EvaluationJobConfig{
+			Queue: &api.QueueConfig{Name: "q", Kind: "other"},
+		}
+		handlers.ApplyEvaluationJobQueueDefaults(cfg)
+		if cfg.Queue.Kind != "other" {
+			t.Fatalf("got kind %q", cfg.Queue.Kind)
+		}
+	})
 }
 
 /* TODO: Fix this test
