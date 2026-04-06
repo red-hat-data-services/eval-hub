@@ -1,7 +1,7 @@
 id: garak-kfp
 name: Garak KFP
 title: Garak KFP
-description: LLM vulnerability scanner and red-teaming framework with KFP execution mode
+description: LLM vulnerability scanner and red-teaming framework with Data Science Pipeline execution mode.
 runtime:
   k8s:
     image: quay.io/trustyai/trustyai-garak-lls-provider-dsp:latest
@@ -22,8 +22,8 @@ runtime:
     command: "true"
 benchmarks:
   - id: intents
-    name: Context-aware vulnerability scan
-    description: Risk assessment with a context-aware custom intent typology and probes of increasing complexity.
+    name: Context-aware vulnerability scan (Pipeline)
+    description: Risk assessment with a context-aware custom intent typology and probes of increasing complexity. Runs as an AI Pipeline and requires a Data Science Pipelines setup.
     category: security
     metrics:
       - attack_success_rate
@@ -31,9 +31,10 @@ benchmarks:
       - security
       - intents
       - red_team
+      - pipeline
   - id: owasp_llm_top10
-    name: OWASP LLM top 10 risk scan
-    description: Tests against the top 10 security risks specific to LLM applications (prompt injection, data leakage, etc.).
+    name: OWASP LLM top 10 risk scan (Pipeline)
+    description: Tests against the top 10 security risks specific to LLM applications (prompt injection, data leakage, etc.). Runs as an AI Pipeline and requires a Data Science Pipelines setup.
     category: security
     metrics:
       - attack_success_rate
@@ -41,9 +42,10 @@ benchmarks:
       - security
       - owasp
       - red_team
+      - pipeline
   - id: avid
-    name: Full AI vulnerability scan
-    description: Comprehensive scan across all security, ethics, and performance categories from the AVID taxonomy.
+    name: Full AI vulnerability scan (Pipeline)
+    description: Comprehensive scan across all security, ethics, and performance categories from the AVID taxonomy. Runs as an AI Pipeline and requires a Data Science Pipelines setup.
     category: security
     metrics:
       - attack_success_rate
@@ -51,9 +53,10 @@ benchmarks:
       - security
       - avid
       - red_team
+      - pipeline
   - id: avid_security
-    name: AI security vulnerability scan
-    description: Probes for security-specific vulnerabilities (data poisoning, model theft, evasion attacks).
+    name: AI security vulnerability scan (Pipeline)
+    description: Probes for security-specific vulnerabilities (data poisoning, model theft, evasion attacks). Runs as an AI Pipeline and requires a Data Science Pipelines setup.
     category: security
     metrics:
       - attack_success_rate
@@ -61,9 +64,10 @@ benchmarks:
       - security
       - avid
       - red_team
+      - pipeline
   - id: avid_ethics
-    name: AI ethics & bias scan
-    description: Probes for ethical concerns including bias, fairness, and harmful content generation.
+    name: AI ethics & bias scan (Pipeline)
+    description: Probes for ethical concerns including bias, fairness, and harmful content generation. Runs as an AI Pipeline and requires a Data Science Pipelines setup.
     category: safety
     metrics:
       - attack_success_rate
@@ -72,9 +76,10 @@ benchmarks:
       - ethics
       - avid
       - red_team
+      - pipeline
   - id: avid_performance
-    name: AI performance degradation scan
-    description: Tests for performance issues like hallucination under load, context window failures, and degradation.
+    name: AI performance degradation scan (Pipeline)
+    description: Tests for performance issues like hallucination under load, context window failures, and degradation. Runs as an AI Pipeline and requires a Data Science Pipelines setup.
     category: performance
     metrics:
       - attack_success_rate
@@ -82,9 +87,10 @@ benchmarks:
       - performance
       - avid
       - red_team
+      - pipeline
   - id: quality
-    name: Toxic & harmful content scan
-    description: Scans for violence, profanity, toxicity, hate speech, and content integrity issues.
+    name: Toxic & harmful content scan (Pipeline)
+    description: Scans for violence, profanity, toxicity, hate speech, and content integrity issues. Runs as an AI Pipeline and requires a Data Science Pipelines setup.
     category: safety
     metrics:
       - attack_success_rate
@@ -93,9 +99,10 @@ benchmarks:
       - quality
       - toxicity
       - red_team
+      - pipeline
   - id: cwe
-    name: Software weakness exploitation scan
-    description: Tests whether the model can be used to exploit Common Weakness Enumeration software vulnerabilities.
+    name: Software weakness exploitation scan (Pipeline)
+    description: Tests whether the model can be used to exploit Common Weakness Enumeration software vulnerabilities. Runs as an AI Pipeline and requires a Data Science Pipelines setup.
     category: security
     metrics:
       - attack_success_rate
@@ -103,9 +110,10 @@ benchmarks:
       - security
       - cwe
       - red_team
+      - pipeline
   - id: quick
-    name: Quick security smoke test
-    description: Single-probe rapid scan for quick validation.
+    name: Quick security smoke test (Pipeline)
+    description: Single-probe rapid scan for quick validation. Runs as an AI Pipeline and requires a Data Science Pipelines setup.
     category: security
     metrics:
       - attack_success_rate
@@ -113,3 +121,4 @@ benchmarks:
       - security
       - quick
       - red_team
+      - pipeline
