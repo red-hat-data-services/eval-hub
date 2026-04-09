@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -68,11 +69,16 @@ func (s *SidecarServer) setupRoutes() (http.Handler, error) {
 		return nil, fmt.Errorf("failed to create handlers: %w", err)
 	}
 
+	s.setupHealthRoutes(h, router)
 	s.setupSidecarProxyRoutes(h, router)
 
 	handler := http.Handler(router)
 
 	return handler, nil
+}
+
+func (s *SidecarServer) setupHealthRoutes(h *handlers.Handlers, router *http.ServeMux) {
+	router.HandleFunc("GET /health", h.HandleHealth)
 }
 
 func (s *SidecarServer) setupSidecarProxyRoutes(h *handlers.Handlers, router *http.ServeMux) {
@@ -95,6 +101,7 @@ func (s *SidecarServer) Start() error {
 		ReadTimeout:  15 * time.Second,
 		WriteTimeout: 15 * time.Second,
 		IdleTimeout:  60 * time.Second,
+		TLSConfig:    &tls.Config{MinVersion: tls.VersionTLS12},
 	}
 
 	readyFile := ""

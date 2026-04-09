@@ -62,7 +62,6 @@ type jobConfig struct {
 	ociCredentialsSecret string
 	modelAuthSecretRef   string
 	sidecarResources     corev1.ResourceRequirements
-	localMode            bool
 	testDataS3           s3TestDataConfig
 	testDataInitImage    string
 	sidecarConfig        *config.SidecarConfig
@@ -95,11 +94,16 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 		return nil, fmt.Errorf("model url and name are required")
 	}
 
-	sidecarBaseURL := "http://localhost:8080"
+	port := defaultSidecarPort
+	sidecarBaseURL := ""
 	if serviceConfig != nil && serviceConfig.Sidecar != nil {
-		if baseURL := strings.TrimSpace(serviceConfig.Sidecar.BaseURL); baseURL != "" {
-			sidecarBaseURL = baseURL
+		if serviceConfig.Sidecar.Port != 0 {
+			port = int32(serviceConfig.Sidecar.Port)
 		}
+		sidecarBaseURL = strings.TrimSpace(serviceConfig.Sidecar.BaseURL)
+	}
+	if sidecarBaseURL == "" {
+		sidecarBaseURL = fmt.Sprintf("http://localhost:%d", port)
 	}
 
 	namespace := resolveNamespace(string(evaluation.Resource.Tenant))
@@ -131,13 +135,13 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 	if evalHubInstanceName != "" {
 		saNamespace := instanceNamespace
 		if saNamespace == "" {
-			saNamespace = namespace // fallback for local mode
+			saNamespace = namespace // fallback when not running in-cluster
 		}
 		evalHubCRNamespace = saNamespace
 		serviceAccountName = evalHubInstanceName + "-" + saNamespace + serviceAccountNameSuffix
 		serviceCAConfigMap = evalHubInstanceName + serviceCAConfigMapSuffix
 		// EvalHub URL points to the kube-rbac-proxy HTTPS endpoint in the instance namespace.
-		// Use saNamespace (which has the local-mode fallback applied) to avoid a malformed host
+		// Use saNamespace (which falls back to namespace when not in-cluster) to avoid a malformed host
 		// when instanceNamespace is empty.
 		// This is required by sidecar to call eval-hub API.
 		// This is different from job_spec.callback_url which is used by the adapter to call the sidecar
@@ -161,7 +165,6 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 		return nil, err
 	}
 
-	localMode := serviceConfig != nil && serviceConfig.Service != nil && serviceConfig.Service.LocalMode
 	var testDataS3Bucket, testDataS3Key, testDataS3SecretRef string
 	if benchmarkConfig.TestDataRef != nil && benchmarkConfig.TestDataRef.S3 != nil {
 		testDataS3Bucket = strings.TrimSpace(benchmarkConfig.TestDataRef.S3.Bucket)
@@ -201,7 +204,6 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 		modelAuthSecretRef:   modelAuthSecretRef,
 		sidecarResources:     sidecarResources,
 		sidecarBaseURL:       sidecarBaseURL,
-		localMode:            localMode,
 		evalHubURL:           evalHubURL,
 		queueKind:            queueKind,
 		queueName:            queueName,

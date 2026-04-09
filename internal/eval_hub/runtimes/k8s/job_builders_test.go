@@ -8,7 +8,17 @@ import (
 	"github.com/eval-hub/eval-hub/internal/eval_hub/config"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/runtimes/shared"
 	"github.com/eval-hub/eval-hub/pkg/api"
+	corev1 "k8s.io/api/core/v1"
 )
+
+func findContainer(containers []corev1.Container, name string) *corev1.Container {
+	for i := range containers {
+		if containers[i].Name == name {
+			return &containers[i]
+		}
+	}
+	return nil
+}
 
 func TestBuildConfigMap(t *testing.T) {
 
@@ -159,75 +169,36 @@ func TestBuildJobRequiresAdapterImage(t *testing.T) {
 }
 
 func TestBuildJobAdapterEvalHubModeEnv(t *testing.T) {
-	t.Run("k8s when not local mode", func(t *testing.T) {
-		cfg := &jobConfig{
-			jobID:          "job-mode",
-			resourceGUID:   "guid-mode",
-			benchmarkIndex: 0,
-			namespace:      "default",
-			providerID:     "provider-1",
-			benchmarkID:    "bench-1",
-			adapterImage:   "adapter:latest",
-			defaultEnv:     []api.EnvVar{},
-			localMode:      false,
+	cfg := &jobConfig{
+		jobID:          "job-mode",
+		resourceGUID:   "guid-mode",
+		benchmarkIndex: 0,
+		namespace:      "default",
+		providerID:     "provider-1",
+		benchmarkID:    "bench-1",
+		adapterImage:   "adapter:latest",
+		defaultEnv:     []api.EnvVar{},
+	}
+	job, err := buildJob(cfg)
+	if err != nil {
+		t.Fatalf("buildJob: %v", err)
+	}
+	adapter := job.Spec.Template.Spec.Containers[0]
+	var got string
+	var found bool
+	for _, e := range adapter.Env {
+		if e.Name == envEvalHubModeName {
+			found = true
+			got = e.Value
+			break
 		}
-		job, err := buildJob(cfg)
-		if err != nil {
-			t.Fatalf("buildJob: %v", err)
-		}
-		adapter := job.Spec.Template.Spec.Containers[0]
-		var got string
-		var found bool
-		for _, e := range adapter.Env {
-			if e.Name == envEvalHubModeName {
-				found = true
-				got = e.Value
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("adapter missing env %q", envEvalHubModeName)
-		}
-		if got != "k8s" {
-			t.Fatalf("EVALHUB_MODE = %q, want k8s", got)
-		}
-	})
-	t.Run("local when local mode", func(t *testing.T) {
-		cfg := &jobConfig{
-			jobID:          "job-mode-local",
-			resourceGUID:   "guid-mode-l",
-			benchmarkIndex: 0,
-			namespace:      "default",
-			providerID:     "provider-1",
-			benchmarkID:    "bench-1",
-			adapterImage:   "adapter:latest",
-			defaultEnv:     []api.EnvVar{},
-			localMode:      true,
-		}
-		job, err := buildJob(cfg)
-		if err != nil {
-			t.Fatalf("buildJob: %v", err)
-		}
-		if len(job.Spec.Template.Spec.Containers) != 1 {
-			t.Fatalf("expected single adapter container in local mode, got %d", len(job.Spec.Template.Spec.Containers))
-		}
-		adapter := job.Spec.Template.Spec.Containers[0]
-		var got string
-		var found bool
-		for _, e := range adapter.Env {
-			if e.Name == envEvalHubModeName {
-				found = true
-				got = e.Value
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("adapter missing env %q", envEvalHubModeName)
-		}
-		if got != "local" {
-			t.Fatalf("EVALHUB_MODE = %q, want local", got)
-		}
-	})
+	}
+	if !found {
+		t.Fatalf("adapter missing env %q", envEvalHubModeName)
+	}
+	if got != "k8s" {
+		t.Fatalf("EVALHUB_MODE = %q, want k8s", got)
+	}
 }
 
 func TestBuildJobSecurityContext(t *testing.T) {
@@ -415,9 +386,6 @@ func TestBuildJobTerminationFileVolume(t *testing.T) {
 	if !foundVol {
 		t.Fatalf("expected volume %q", terminationFileVolumeName)
 	}
-	if len(job.Spec.Template.Spec.Containers) < 2 {
-		t.Fatal("expected adapter and sidecar")
-	}
 	adapter := job.Spec.Template.Spec.Containers[0]
 	var adapterMount bool
 	for _, m := range adapter.VolumeMounts {
@@ -429,7 +397,10 @@ func TestBuildJobTerminationFileVolume(t *testing.T) {
 	if !adapterMount {
 		t.Fatalf("adapter should mount %q at %q", terminationFileVolumeName, adapterTerminationSharedMountPath)
 	}
-	sidecar := job.Spec.Template.Spec.Containers[1]
+	sidecar := findContainer(job.Spec.Template.Spec.InitContainers, sidecarContainerName)
+	if sidecar == nil {
+		t.Fatal("expected sidecar init container")
+	}
 	var sidecarMount bool
 	for _, m := range sidecar.VolumeMounts {
 		if m.Name == terminationFileVolumeName && m.MountPath == adapterTerminationSharedMountPath {
@@ -462,10 +433,10 @@ func TestBuildJobSidecarDoesNotUseEvalhubConfigVolume(t *testing.T) {
 			t.Fatalf("job pod must not reference evalhub-config ConfigMap volume, got volume %q", v.Name)
 		}
 	}
-	if len(job.Spec.Template.Spec.Containers) < 2 {
-		t.Fatal("expected sidecar container")
+	sidecar := findContainer(job.Spec.Template.Spec.InitContainers, sidecarContainerName)
+	if sidecar == nil {
+		t.Fatal("expected sidecar init container")
 	}
-	sidecar := job.Spec.Template.Spec.Containers[1]
 	for _, m := range sidecar.VolumeMounts {
 		if m.MountPath == "/etc/evalhub/config" {
 			t.Fatalf("sidecar must not mount evalhub-config at /etc/evalhub/config")
@@ -529,12 +500,9 @@ func TestBuildJobWithS3TestData(t *testing.T) {
 		t.Fatalf("buildJob returned error: %v", err)
 	}
 
-	if len(job.Spec.Template.Spec.InitContainers) != 1 {
-		t.Fatalf("expected 1 init container, got %d", len(job.Spec.Template.Spec.InitContainers))
-	}
-	initContainer := job.Spec.Template.Spec.InitContainers[0]
-	if initContainer.Name != initContainerName {
-		t.Fatalf("expected init container name %q, got %q", initContainerName, initContainer.Name)
+	initContainer := findContainer(job.Spec.Template.Spec.InitContainers, initContainerName)
+	if initContainer == nil {
+		t.Fatal("expected test-data init container")
 	}
 	if initContainer.Image != "quay.io/evalhub/evalhub:test" {
 		t.Fatalf("expected init container image %q, got %q", "quay.io/evalhub/evalhub:test", initContainer.Image)
@@ -611,8 +579,9 @@ func TestBuildJobWithS3TestDataSkipsEmptyNormalizedKey(t *testing.T) {
 		t.Fatalf("buildJob returned error: %v", err)
 	}
 
-	if len(job.Spec.Template.Spec.InitContainers) != 0 {
-		t.Fatalf("expected no init containers when normalized key is empty")
+	// Only the sidecar init container should be present (no test-data init container)
+	if findContainer(job.Spec.Template.Spec.InitContainers, initContainerName) != nil {
+		t.Fatalf("expected no test-data init container when normalized key is empty")
 	}
 	for _, v := range job.Spec.Template.Spec.Volumes {
 		if v.Name == testDataVolumeName || v.Name == testDataSecretVolumeName {
