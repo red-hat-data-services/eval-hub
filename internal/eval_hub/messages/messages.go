@@ -65,6 +65,13 @@ var (
 		"job_can_not_be_updated",
 	)
 
+	// RequestBodyTooLarge The request body exceeds the maximum allowed size of {{.Limit}} bytes.
+	RequestBodyTooLarge = createMessage(
+		constants.HTTPCodePayloadTooLarge,
+		"The request body exceeds the maximum allowed size of {{.Limit}} bytes.",
+		"request_body_too_large",
+	)
+
 	// InvalidJSONRequest The request JSON is invalid: '{{.Error}}'. Please check the request and try again.
 	InvalidJSONRequest = createMessage(
 		constants.HTTPCodeBadRequest,
@@ -232,11 +239,18 @@ var (
 		"unable_to_authorize_request",
 	)
 
-	// Unauthorized The request is not authenticated: '{{.Error}}'.
+	// Unauthorized The request is not authenticated.
 	Unauthorized = createMessage(
 		constants.HTTPCodeUnauthorized,
 		"The request is not authenticated.",
 		"unauthorized",
+	)
+
+	// MissingAuthenticationHeader The request is not authenticated. Please provide a non-empty authentication header {{.Header}}.
+	MissingAuthenticationHeader = createMessage(
+		constants.HTTPCodeUnauthorized,
+		"The request is not authenticated. Please provide a non-empty authentication header {{.Header}}.",
+		"missing_authentication_header",
 	)
 )
 
