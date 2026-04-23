@@ -48,6 +48,7 @@ make fmt                # Format code with go fmt
 ```bash
 make install-deps       # Download and tidy dependencies (requires Python 3 for test color output via scripts/grcat)
 make update-deps        # Update all dependencies to latest
+# Note: uv (https://docs.astral.sh/uv/) is required for `make test-fvt` and `make start-service` (manages Python venv and test dependencies)
 ```
 
 ### Database Setup
@@ -67,6 +68,17 @@ make grant-permissions  # Grant permissions to user
 
 ```bash
 make clean              # Remove build artifacts and coverage files
+```
+
+## Git commits
+
+Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, etc., with an optional scope (e.g. `feat(http): …`).
+
+When a change is assisted by Cursor, add these lines to the **end** of the commit message body (after the subject and any description), as Git trailers:
+
+```
+Assisted-by: Cursor
+Made-with: Cursor
 ```
 
 ## Architecture Overview
@@ -172,7 +184,7 @@ Example (matches `setupEvaluationJobsRoutes`):
 s.handleFunc(router, "/api/v1/evaluations/jobs", func(w http.ResponseWriter, r *http.Request) {
     ctx := s.newExecutionContext(r)
     resp := NewRespWrapper(w, ctx)
-    req := NewRequestWrapper(r)
+    req := s.newRequestWrapper(w, r)
     switch r.Method {
     case http.MethodPost:
         h.HandleCreateEvaluation(ctx, req, resp)

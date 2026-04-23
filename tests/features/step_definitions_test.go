@@ -81,7 +81,7 @@ type scenarioConfig struct {
 func getLogger() *log.Logger {
 	once.Do(func() {
 		if logger == nil {
-			path := filepath.Join("..", "..", "bin", "tests.log")
+			path := filepath.Join("bin", "tests.log")
 			path, err := filepath.Abs(path)
 			if err != nil {
 				panic(logError(fmt.Errorf("Failed to get absolute path: %v", err)))
@@ -171,7 +171,7 @@ func (a *apiFeature) startLocalServer(port int) error {
 		return err
 	}
 	validate := validation.NewValidator()
-	serviceConfig, err := config.LoadConfig(logger, "0.3.0", "local", time.Now().Format(time.RFC3339))
+	serviceConfig, err := config.LoadConfig(logger, "0.4.0", "local", time.Now().Format(time.RFC3339))
 	if err != nil {
 		return logError(fmt.Errorf("failed to load service config: %w", err))
 	}
@@ -190,8 +190,6 @@ func (a *apiFeature) startLocalServer(port int) error {
 	}
 
 	logger.Info("Providers loaded.")
-	// Override local runtime commands for testing so subprocesses
-	// Exit cleanly instead of failing with "command not found".
 	for key := range providerConfigs {
 		providerCfg := providerConfigs[key]
 		if providerCfg.Runtime == nil {
@@ -200,7 +198,6 @@ func (a *apiFeature) startLocalServer(port int) error {
 		if providerCfg.Runtime.Local == nil {
 			providerCfg.Runtime.Local = &pkgapi.LocalRuntime{}
 		}
-		providerCfg.Runtime.Local.Command = "true"
 		providerConfigs[key] = providerCfg
 	}
 
@@ -289,6 +286,11 @@ func (tc *scenarioConfig) logError(err error, withStack ...bool) error {
 	return fmt.Errorf("%s%v", sb.String(), err)
 }
 
+func (tc *scenarioConfig) saveValue(name, value string) {
+	tc.values[name] = value
+	tc.logDebug("Saved value %s: %s\n", name, value)
+}
+
 func (tc *scenarioConfig) theServiceIsRunning(ctx context.Context) error {
 	// Check that the server is actually running by sending a request to the health endpoint
 	for range 10 {
@@ -366,6 +368,12 @@ func (tc *scenarioConfig) thereAreSystemCollections(ctx context.Context) error {
 
 	var resp struct {
 		TotalCount int `json:"total_count"`
+		Items      []struct {
+			Resource struct {
+				ID string `json:"id"`
+			} `json:"resource"`
+			Name string `json:"name"`
+		} `json:"items"`
 	}
 	if err := json.Unmarshal(tc.body, &resp); err != nil {
 		return tc.logError(fmt.Errorf("failed to parse collections list: %w", err))
@@ -375,6 +383,36 @@ func (tc *scenarioConfig) thereAreSystemCollections(ctx context.Context) error {
 		tc.logDebug("Skipping scenario: no system collections found so skipping the scenario\n")
 		return godog.ErrSkip
 	}
+
+	// save the collection names for later use
+	for index, item := range resp.Items {
+		tc.saveValue(fmt.Sprintf("collection%d:id", index), item.Resource.ID)
+		tc.saveValue(fmt.Sprintf("collection%d:name", index), item.Name)
+	}
+
+	return nil
+}
+
+func (tc *scenarioConfig) thereIsASystemCollectionWithId(ctx context.Context, id string) error {
+	if err := tc.iSendARequestImpl("GET", "/api/v1/evaluations/collections/"+id, "", "there is a system collection with id "+id); err != nil {
+		return err
+	}
+	if tc.response.StatusCode != 200 {
+		tc.logDebug("Skipping scenario: system collection with id %s not found\n", id)
+		return godog.ErrSkip
+	}
+
+	// save the collection id for later use
+	tc.saveValue("collection:id", id)
+	name, err := tc.getJsonPathValue("$.name")
+	if err != nil {
+		return err
+	}
+	nameStr, ok := name.(string)
+	if !ok {
+		return tc.logError(fmt.Errorf("expected name to be a string, got %T", name))
+	}
+	tc.saveValue("collection:name", nameStr)
 
 	return nil
 }
@@ -507,7 +545,7 @@ func (tc *scenarioConfig) iWaitForEvaluationJobStatus(expectedStatus string) err
 }
 
 func (tc *scenarioConfig) findFile(fileName string) (string, error) {
-	file := filepath.Join("test_data", fileName)
+	file := filepath.Join("tests", "features", "test_data", fileName)
 	if _, err := os.Stat(file); os.IsNotExist(err) {
 		path, _ := os.Getwd()
 		return "", tc.logError(fmt.Errorf("test file %s not found in directory %s", fileName, path))
@@ -837,8 +875,13 @@ func (tc *scenarioConfig) theResponseShouldContainWithValue(key, value string) e
 		return tc.logError(err)
 	}
 
-	if data[key] != value {
-		return tc.logError(fmt.Errorf("expected %s to be %s, got %v in %s", key, value, data[key], asPrettyJson(string(tc.body))))
+	v, err := tc.getValue(value)
+	if err != nil {
+		return err
+	}
+
+	if data[key] != v {
+		return tc.logError(fmt.Errorf("expected %s to be %s, got %v in %s", key, v, data[key], asPrettyJson(string(tc.body))))
 	}
 
 	return nil
@@ -850,8 +893,13 @@ func (tc *scenarioConfig) theResponseShouldContain(key string) error {
 		return tc.logError(err)
 	}
 
-	if _, ok := data[key]; !ok {
-		return tc.logError(fmt.Errorf("response does not contain key: %s in %s", key, asPrettyJson(string(tc.body))))
+	k, err := tc.getValue(key)
+	if err != nil {
+		return err
+	}
+
+	if _, ok := data[k]; !ok {
+		return tc.logError(fmt.Errorf("response does not contain key: %s in %s", k, asPrettyJson(string(tc.body))))
 	}
 
 	return nil
@@ -1142,7 +1190,7 @@ func (tc *scenarioConfig) theFieldShouldBeSaved(path string, name string) error 
 	}
 	if strings.HasPrefix(name, valuePrefix) {
 		realName := strings.TrimPrefix(name, valuePrefix)
-		tc.values[realName] = finalResult
+		tc.saveValue(realName, finalResult)
 		tc.logDebug("Saved value %s as %s\n", realName, finalResult)
 	} else {
 		return tc.logError(fmt.Errorf("unexpected value %s, should start with '%s'", name, valuePrefix))
@@ -1339,6 +1387,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^there are system providers$`, tc.thereAreSystemProviders)
 	ctx.Step(`^there are no user collections$`, tc.thereAreNoUserCollections)
 	ctx.Step(`^there are system collections$`, tc.thereAreSystemCollections)
+	ctx.Step(`^there is a system collection with id "([^"]*)"$`, tc.thereIsASystemCollectionWithId)
 	ctx.Step(`^I set the header "([^"]*)" to "([^"]*)"$`, tc.iSetHeaderTo)
 	ctx.Step(`^I unset the header "([^"]*)"$`, tc.iUnsetHeader)
 	ctx.Step(`^I set transaction-id to "([^"]*)"$`, tc.iSetTransactionIdTo)
