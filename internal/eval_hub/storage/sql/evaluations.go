@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"strings"
-	"time"
 
 	"github.com/eval-hub/eval-hub/internal/eval_hub/abstractions"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/constants"
@@ -257,7 +255,7 @@ func (s *sqlStorage) validateBenchmarkExists(job *api.EvaluationJobResource, run
 }
 
 // GetOverallJobStatus returns overall state and message. getCollection is used to resolve job benchmark count when job has only a collection reference.
-func (s *sqlStorage) getOverallJobStatus(job *api.EvaluationJobResource) (api.OverallState, *api.MessageInfo, error) {
+func (s *sqlStorage) getOverallJobStatus(txn *sql.Tx, job *api.EvaluationJobResource) (api.OverallState, *api.MessageInfo, error) {
 	// to be safe - do an initial check to see if the job is finished
 	if job.Status.State.IsTerminalState() {
 		return job.Status.State, job.Status.Message, nil
@@ -277,7 +275,7 @@ func (s *sqlStorage) getOverallJobStatus(job *api.EvaluationJobResource) (api.Ov
 	var collection *api.CollectionResource
 	var err error
 	if job.Collection != nil && job.Collection.ID != "" {
-		collection, err = s.GetCollection(job.Collection.ID)
+		collection, err = s.getCollectionTransactional(txn, job.Collection.ID)
 		if err != nil {
 			return api.OverallStatePending, &api.MessageInfo{
 				Message:     "Evaluation job is pending",
@@ -370,119 +368,90 @@ func (s *sqlStorage) updateBenchmarkResults(job *api.EvaluationJobResource, runS
 	return nil
 }
 
-// String-matched because ServiceError does not preserve the original driver error.
-// SQLite error strings come from the C library via modernc.org/sqlite conn.errstr()
-// (sqlite3_errstr + sqlite3_errmsg), not from the ErrorCodeString map in error.go:
-//
-//	SQLITE_BUSY  (5) → "database is locked (5) (SQLITE_BUSY)"
-//	SQLITE_LOCKED(6) → "database table is locked: database is deadlocked (6)"
-func isRetryableDBError(err error) bool {
-	if err == nil {
-		return false
-	}
-	msg := err.Error()
-	return strings.Contains(msg, "database is locked") ||
-		strings.Contains(msg, "database is deadlocked") ||
-		strings.Contains(msg, "database table is locked")
-}
-
 // UpdateEvaluationJobWithRunStatus runs in a transaction: fetches the job, merges RunStatusInternal into the entity, and persists.
-// Concurrent benchmark status events for the same job can cause lock contention;
-// the transaction is retried on retryable database errors.
 func (s *sqlStorage) UpdateEvaluationJob(id string, runStatus *api.StatusEvent) error {
-	maxRetries := s.sqlConfig.GetTxRetryMax()
-	retryInterval := s.sqlConfig.GetTxRetryInterval()
-	var err error
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			s.logger.Info("Retrying evaluation job update after lock contention", "id", id, "attempt", attempt)
-			time.Sleep(time.Duration(attempt) * retryInterval)
-		}
-		err = s.withTransaction("update evaluation job", id, func(txn *sql.Tx) error {
-			s.logger.Info("Updating evaluation job", "id", id, "status", runStatus.BenchmarkStatusEvent.Status, "runStatus", runStatus)
+	err := s.withTransaction("update evaluation job", id, func(txn *sql.Tx) error {
+		s.logger.Info("Updating evaluation job", "id", id, "status", runStatus.BenchmarkStatusEvent.Status, "runStatus", runStatus)
 
-			job, err := s.getEvaluationJobTransactional(txn, id)
-			if err != nil {
-				return err
-			}
-
-			// Guard: reject benchmark updates if job is already in a terminal state.
-			// We pass OverallStateRunning as the target to leverage checkEvaluationJobState's terminal-state check.
-			if _, err := s.checkEvaluationJobState(job.Resource.ID, job.Status.State, api.OverallStateRunning); err != nil {
-				return err
-			}
-
-			var collection *api.CollectionResource
-			if job.Collection != nil && job.Collection.ID != "" {
-				collection, err = s.GetCollection(job.Collection.ID)
-				if err != nil {
-					return err
-				}
-			}
-			err = s.validateBenchmarkExists(job, runStatus, collection)
-			if err != nil {
-				return err
-			}
-
-			// first we store the benchmark status
-			benchmark := api.BenchmarkStatus{
-				ProviderID:     runStatus.BenchmarkStatusEvent.ProviderID,
-				ID:             runStatus.BenchmarkStatusEvent.ID,
-				Status:         runStatus.BenchmarkStatusEvent.Status,
-				ErrorMessage:   runStatus.BenchmarkStatusEvent.ErrorMessage,
-				StartedAt:      runStatus.BenchmarkStatusEvent.StartedAt,
-				CompletedAt:    runStatus.BenchmarkStatusEvent.CompletedAt,
-				BenchmarkIndex: runStatus.BenchmarkStatusEvent.BenchmarkIndex,
-			}
-			s.updateBenchmarkStatus(job, runStatus, &benchmark)
-
-			outcome := s.computeBenchmarkTestResult(job, runStatus.BenchmarkStatusEvent, collection)
-
-			// if the run status is terminal, we need to update the results
-			if api.IsBenchmarkTerminalState(runStatus.BenchmarkStatusEvent.Status) {
-				result := api.BenchmarkResult{
-					ID:             runStatus.BenchmarkStatusEvent.ID,
-					ProviderID:     runStatus.BenchmarkStatusEvent.ProviderID,
-					Metrics:        runStatus.BenchmarkStatusEvent.Metrics,
-					Artifacts:      runStatus.BenchmarkStatusEvent.Artifacts,
-					MLFlowRunID:    runStatus.BenchmarkStatusEvent.MLFlowRunID,
-					LogsPath:       runStatus.BenchmarkStatusEvent.LogsPath,
-					BenchmarkIndex: runStatus.BenchmarkStatusEvent.BenchmarkIndex,
-					Test:           outcome,
-				}
-				err := s.updateBenchmarkResults(job, runStatus, &result)
-				if err != nil {
-					return err
-				}
-			}
-
-			// get the overall job status
-			overallState, message, err := s.getOverallJobStatus(job)
-			if err != nil {
-				return err
-			}
-			job.Status.State = overallState
-			job.Status.Message = message
-
-			s.logger.Info("Calculated overall job status", "id", id, "overall_state", overallState, "status", runStatus.BenchmarkStatusEvent.Status)
-
-			// compute the job test result only if the job is completed
-			if overallState == api.OverallStateCompleted {
-				s.computeJobTestResult(job, collection)
-			}
-
-			entity := EvaluationJobEntity{
-				Config:  &job.EvaluationJobConfig,
-				Status:  job.Status,
-				Results: job.Results,
-			}
-
-			return s.updateEvaluationJobTxn(txn, id, overallState, &entity)
-		})
-		if err == nil || !isRetryableDBError(err) {
+		job, err := s.getEvaluationJobTransactional(txn, id)
+		if err != nil {
 			return err
 		}
-	}
+
+		// Guard: reject benchmark updates if job is already in a terminal state.
+		// We pass OverallStateRunning as the target to leverage checkEvaluationJobState's terminal-state check.
+		if _, err := s.checkEvaluationJobState(job.Resource.ID, job.Status.State, api.OverallStateRunning); err != nil {
+			return err
+		}
+
+		var collection *api.CollectionResource
+		if job.Collection != nil && job.Collection.ID != "" {
+			collection, err = s.getCollectionTransactional(txn, job.Collection.ID)
+			if err != nil {
+				return err
+			}
+		}
+		err = s.validateBenchmarkExists(job, runStatus, collection)
+		if err != nil {
+			return err
+		}
+
+		// first we store the benchmark status
+		benchmark := api.BenchmarkStatus{
+			ProviderID:     runStatus.BenchmarkStatusEvent.ProviderID,
+			ID:             runStatus.BenchmarkStatusEvent.ID,
+			Status:         runStatus.BenchmarkStatusEvent.Status,
+			ErrorMessage:   runStatus.BenchmarkStatusEvent.ErrorMessage,
+			StartedAt:      runStatus.BenchmarkStatusEvent.StartedAt,
+			CompletedAt:    runStatus.BenchmarkStatusEvent.CompletedAt,
+			BenchmarkIndex: runStatus.BenchmarkStatusEvent.BenchmarkIndex,
+		}
+		s.updateBenchmarkStatus(job, runStatus, &benchmark)
+
+		outcome := s.computeBenchmarkTestResult(txn, job, runStatus.BenchmarkStatusEvent, collection)
+
+		// if the run status is terminal, we need to update the results
+		if api.IsBenchmarkTerminalState(runStatus.BenchmarkStatusEvent.Status) {
+			result := api.BenchmarkResult{
+				ID:             runStatus.BenchmarkStatusEvent.ID,
+				ProviderID:     runStatus.BenchmarkStatusEvent.ProviderID,
+				Metrics:        runStatus.BenchmarkStatusEvent.Metrics,
+				Artifacts:      runStatus.BenchmarkStatusEvent.Artifacts,
+				MLFlowRunID:    runStatus.BenchmarkStatusEvent.MLFlowRunID,
+				LogsPath:       runStatus.BenchmarkStatusEvent.LogsPath,
+				BenchmarkIndex: runStatus.BenchmarkStatusEvent.BenchmarkIndex,
+				Test:           outcome,
+			}
+			err := s.updateBenchmarkResults(job, runStatus, &result)
+			if err != nil {
+				return err
+			}
+		}
+
+		// get the overall job status
+		overallState, message, err := s.getOverallJobStatus(txn, job)
+		if err != nil {
+			return err
+		}
+		job.Status.State = overallState
+		job.Status.Message = message
+
+		s.logger.Info("Calculated overall job status", "id", id, "overall_state", overallState, "status", runStatus.BenchmarkStatusEvent.Status)
+
+		// compute the job test result only if the job is completed
+		if overallState == api.OverallStateCompleted {
+			s.computeJobTestResult(job, collection)
+		}
+
+		entity := EvaluationJobEntity{
+			Config:  &job.EvaluationJobConfig,
+			Status:  job.Status,
+			Results: job.Results,
+		}
+
+		return s.updateEvaluationJobTxn(txn, id, overallState, &entity)
+	})
+
 	return err
 }
 
@@ -554,7 +523,7 @@ func getPassCriteriaThreshold(job *api.EvaluationJobResource, collection *api.Co
 	return 0.5
 }
 
-func (s *sqlStorage) computeBenchmarkTestResult(job *api.EvaluationJobResource, benchmarkStatusEvent *api.BenchmarkStatusEvent, collection *api.CollectionResource) *api.BenchmarkTest {
+func (s *sqlStorage) computeBenchmarkTestResult(txn *sql.Tx, job *api.EvaluationJobResource, benchmarkStatusEvent *api.BenchmarkStatusEvent, collection *api.CollectionResource) *api.BenchmarkTest {
 	// job could have benchmarks array or it could have collection. If it has collection, we need to get the benchmarks from the collection
 	benchmarks, err := handlers.GetJobBenchmarks(job, collection)
 	if err != nil {
@@ -572,7 +541,7 @@ func (s *sqlStorage) computeBenchmarkTestResult(job *api.EvaluationJobResource, 
 		var providerBench *api.BenchmarkResource
 		// if the primary score is not defined, we need to get the primary score from the provider
 		if (primaryScore == nil || primaryScore.Metric == "") && benchmark.ProviderID != "" {
-			provider, err := s.GetProvider(benchmark.ProviderID)
+			provider, err := s.getUserProviderTransactional(txn, benchmark.ProviderID)
 			if err == nil && provider != nil {
 				for i := range provider.Benchmarks {
 					if provider.Benchmarks[i].ID == benchmark.ID {
