@@ -16,8 +16,11 @@ go run cmd/eval_hub/main.go       # Direct Go execution
 ### Building
 
 ```bash
-make build              # Build service, eval_runtime_init, and eval_runtime_sidecar into bin/
+make build              # Build all binaries (service, init, sidecar, mcp) into bin/
+make build-service      # Build only the API service binary
+make build-mcp          # Build only the evalhub-mcp MCP server binary
 ./bin/eval-hub          # Run the API service binary
+./bin/evalhub-mcp       # Run the MCP server binary
 ```
 
 ### Testing
@@ -38,10 +41,16 @@ go test -v ./tests/features -run TestFeatureName
 ### Code Quality
 
 ```bash
-make lint               # Run go vet
-make vet                # Run go vet
 make fmt                # Format code with go fmt
+make lint               # Run go vet
+make vet                # Run go vet (same as lint)
 ```
+
+**Always run `make fmt lint` after file changes and before committing.** This ensures consistent formatting and catches issues early.
+
+### Go Version
+
+**Do not modify the Go version in `go.mod`.** The version specified there is the source of truth. If your local Go toolchain is older, use `GOTOOLCHAIN=auto` to let Go automatically download the required version. Never downgrade `go.mod` to match a locally installed toolchain.
 
 ### Dependencies
 
@@ -74,11 +83,12 @@ make clean              # Remove build artifacts and coverage files
 
 Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, etc., with an optional scope (e.g. `feat(http): …`).
 
-When a change is assisted by Cursor, add these lines to the **end** of the commit message body (after the subject and any description), as Git trailers:
+When a change is assisted by Cursor, add one of these lines, as appropriate, to the **end** of the commit message body (after the subject and any description), as Git trailers:
 
-```
+```text
 Assisted-by: Cursor
 Made-with: Cursor
+Generated with: Claude Code
 ```
 
 ## Architecture Overview
@@ -88,9 +98,11 @@ Made-with: Cursor
 This project follows the standard Go project layout with a clear separation between public entry points (`cmd/`) and private application code (`internal/`). See **ARCHITECTURE.md** for a concise layout and request flow.
 
 - **cmd/eval_hub/** - Main API service entry point
+- **cmd/evalhub_mcp/** - MCP server entry point (stdio and HTTP transports)
 - **cmd/eval_runtime_init/** - Init container for Kubernetes job pods
 - **cmd/eval_runtime_sidecar/** - Sidecar for job pods (proxy, readiness, termination log)
 - **pkg/api/** - Shared API types (IDs, errors, request/response shapes)
+- **pkg/evalhubclient/** - HTTP client library for the eval-hub REST API (used by MCP server and external consumers)
 - **auth/** - Authentication configuration and HTTP middleware helpers
 - **internal/eval_hub/abstractions/** - `Storage`, `Runtime`, and related interfaces
 - **internal/eval_hub/config/** - Configuration loading with Viper
@@ -103,6 +115,8 @@ This project follows the standard Go project layout with a clear separation betw
 - **internal/logging/** - Logger creation (zap backend, `slog` API)
 - **internal/eval_hub/metrics/** - Prometheus metrics and middleware
 - **internal/eval_hub/server/** - Server setup, routing, auth wiring, `newExecutionContext`
+- **internal/evalhub_mcp/config/** - MCP server configuration (CLI flags, YAML profiles, env vars)
+- **internal/evalhub_mcp/server/** - MCP server setup (transport selection, capabilities, client wiring)
 - **docs/src/openapi.yaml** - OpenAPI 3.1.0 specification source; bundled/public copies under **docs/** (see `make generate-public-docs`)
 - **tests/features/** - BDD-style FVT tests using godog
 
@@ -208,7 +222,8 @@ Located alongside code in `*_test.go` files:
 
 - Test individual handlers, middleware, server setup
 - Use standard library `testing` package
-- Found in: `auth/**/*_test.go`, `internal/**/*_test.go`, `cmd/**/*_test.go`
+- Found in: `auth/**/*_test.go`, `internal/**/*_test.go`, `cmd/**/*_test.go`, `pkg/**/*_test.go`
+- MCP server tests use `mcp.NewInMemoryTransports()` for in-process initialize handshake and capability verification
 
 #### FVT (Functional Verification Tests)
 
@@ -218,6 +233,14 @@ BDD-style tests using godog in `tests/features/`:
 - Step definitions in `step_definitions_test.go` implement steps
 - Tests run against actual HTTP server
 - Suite setup in `suite_test.go`
+
+##### FVT Tags
+
+- `@cluster` — tests that require a Kubernetes cluster
+- `@local` — tests that only run locally (excluded from CI)
+- `@mlflow` — tests requiring MLflow integration
+- `@negative` — negative/error-path tests
+- `@gha-wheel-sanity` — subset run during GHA wheel validation (`scripts/gha_wheel_sanity_test.sh`); the script starts the wheel-installed binary, waits for health, then runs `make test-fvt` with this tag
 
 ### Server Lifecycle
 
@@ -229,6 +252,38 @@ Main function (`cmd/eval_hub/main.go`) implements graceful shutdown:
 4. Starts server in a goroutine
 5. Waits for SIGINT/SIGTERM
 6. Gracefully shuts down with a bounded timeout
+
+### MCP Server
+
+The MCP (Model Context Protocol) server exposes eval-hub functionality to AI agents. Entry point: `cmd/evalhub_mcp/main.go`.
+
+```bash
+# Run directly
+go run cmd/evalhub_mcp/main.go                          # stdio transport (default)
+go run cmd/evalhub_mcp/main.go --transport http          # HTTP/SSE transport on localhost:3001
+go run cmd/evalhub_mcp/main.go --transport http --port 4000 --host 0.0.0.0
+
+# Build and run
+make build-mcp
+./bin/evalhub-mcp --version
+./bin/evalhub-mcp --transport http
+
+# Run MCP-specific tests
+go test -v ./cmd/evalhub_mcp/ ./internal/evalhub_mcp/...
+```
+
+**CLI flags:** `--transport stdio|http`, `--host`, `--port`, `--config`, `--insecure`, `--version`
+
+**Configuration precedence:** CLI flags > YAML config (`~/.evalhub/config.yaml`) > env vars (`EVALHUB_BASE_URL`, `EVALHUB_TOKEN`, `EVALHUB_TENANT`, `EVALHUB_INSECURE`)
+
+**Architecture:**
+
+- `server.New()` creates the MCP server with advertised capabilities (tools, resources, prompts)
+- `server.NewEvalHubClient()` creates an eval-hub API client from config
+- `server.RegisterHandlers()` wires tool/resource/prompt handlers; handlers access the API client via closures
+- Server metadata (name, version+build hash) is returned in the MCP `initialize` handshake
+- Both transports share the same `*mcp.Server` instance, so capability listings are identical
+- Uses `github.com/modelcontextprotocol/go-sdk` (Go MCP SDK)
 
 ### Important Implementation Notes
 
@@ -277,6 +332,9 @@ If there are other files in the repository that require updating due to new gola
 Use `go-version-file: "go.mod"` in the github actions where possible.
 
 #### npm devDependencies
+
+Ensure that version pinning is correct and pins to a **single version**,
+regenerate package-lock.json by running npm install after modifying the overrides in package.json.
 
 If updating any dependencies related to `npm` then verify that the documentation
 build still works by running `make documentation`.

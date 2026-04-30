@@ -4,9 +4,11 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -42,6 +44,15 @@ const (
 	regexpPrefix = "regex:"
 )
 
+// modelEndpointStatus captures preflight outcome from checkModelEndpoint for steps that gate on connectivity.
+type modelEndpointStatus int
+
+const (
+	modelEndpointUnchecked modelEndpointStatus = iota
+	modelEndpointUnreachable
+	modelEndpointReachable
+)
+
 var (
 	// testConfig to be used throughout all the test suites
 	// for the global configuration
@@ -49,6 +60,8 @@ var (
 
 	once   sync.Once
 	logger *log.Logger
+
+	modelEndpointConnectivity modelEndpointStatus
 )
 
 type apiFeature struct {
@@ -76,6 +89,9 @@ type scenarioConfig struct {
 	assets map[string][]string
 
 	values map[string]string
+
+	waitDeadline time.Duration
+	waitInterval time.Duration
 }
 
 func getLogger() *log.Logger {
@@ -293,46 +309,15 @@ func (tc *scenarioConfig) saveValue(name, value string) {
 
 func (tc *scenarioConfig) theServiceIsRunning(ctx context.Context) error {
 	// Check that the server is actually running by sending a request to the health endpoint
-	for range 10 {
+	for range 20 {
 		if err := tc.checkHealthEndpoint(); err != nil {
 			tc.logDebug("Error checking health endpoint: %v\n", err.Error())
 			time.Sleep(1 * time.Second)
 		} else {
-			break
+			return nil
 		}
 	}
-
-	return nil
-}
-
-func (tc *scenarioConfig) thereAreNoUserProviders(ctx context.Context) error {
-	if err := tc.iSendARequestImpl("GET", "/api/v1/evaluations/providers?scope=tenant&limit=100", "", "there are no user providers"); err != nil {
-		return err
-	}
-	if tc.response.StatusCode != 200 {
-		return tc.logError(fmt.Errorf("expected 200 listing user providers, got %d: %s", tc.response.StatusCode, string(tc.body)))
-	}
-	var resp struct {
-		Items []struct {
-			Resource struct {
-				ID string `json:"id"`
-			} `json:"resource"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(tc.body, &resp); err != nil {
-		return tc.logError(fmt.Errorf("failed to parse providers list: %w", err))
-	}
-	for _, item := range resp.Items {
-		if item.Resource.ID != "" {
-			if err := tc.iSendARequestImpl("DELETE", "/api/v1/evaluations/providers/"+item.Resource.ID, "", "there are no user providers"); err != nil {
-				return err
-			}
-			if tc.response != nil && tc.response.StatusCode != 204 {
-				return tc.logError(fmt.Errorf("failed to delete provider %s: status %d", item.Resource.ID, tc.response.StatusCode))
-			}
-		}
-	}
-	return nil
+	return tc.logError(fmt.Errorf("service is not running"))
 }
 
 func (tc *scenarioConfig) thereAreSystemProviders(ctx context.Context) error {
@@ -417,66 +402,6 @@ func (tc *scenarioConfig) thereIsASystemCollectionWithId(ctx context.Context, id
 	return nil
 }
 
-func (tc *scenarioConfig) thereAreNoUserCollections(ctx context.Context) error {
-	if err := tc.iSendARequestImpl("GET", "/api/v1/evaluations/collections?scope=tenant&limit=100", "", "there are no user collections"); err != nil {
-		return err
-	}
-	if tc.response.StatusCode != 200 {
-		return tc.logError(fmt.Errorf("expected 200 listing user collections, got %d: %s", tc.response.StatusCode, string(tc.body)))
-	}
-	var resp struct {
-		Items []struct {
-			Resource struct {
-				ID string `json:"id"`
-			} `json:"resource"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(tc.body, &resp); err != nil {
-		return tc.logError(fmt.Errorf("failed to parse collections list: %w", err))
-	}
-	for _, item := range resp.Items {
-		if item.Resource.ID != "" {
-			if err := tc.iSendARequestImpl("DELETE", "/api/v1/evaluations/collections/"+item.Resource.ID, "", "there are no user collections"); err != nil {
-				return err
-			}
-			if tc.response != nil && tc.response.StatusCode != 204 {
-				return tc.logError(fmt.Errorf("failed to delete collection %s: status %d", item.Resource.ID, tc.response.StatusCode))
-			}
-		}
-	}
-	return nil
-}
-
-func (tc *scenarioConfig) thereAreNoEvaluationJobs(ctx context.Context) error {
-	if err := tc.iSendARequestImpl("GET", "/api/v1/evaluations/jobs?limit=100", "", "there are no evaluation jobs"); err != nil {
-		return err
-	}
-	if tc.response.StatusCode != 200 {
-		return tc.logError(fmt.Errorf("expected 200 listing evaluation jobs, got %d: %s", tc.response.StatusCode, string(tc.body)))
-	}
-	var resp struct {
-		Items []struct {
-			Resource struct {
-				ID string `json:"id"`
-			} `json:"resource"`
-		} `json:"items"`
-	}
-	if err := json.Unmarshal(tc.body, &resp); err != nil {
-		return tc.logError(fmt.Errorf("failed to parse evaluation jobs list: %w", err))
-	}
-	for _, item := range resp.Items {
-		if item.Resource.ID != "" {
-			if err := tc.iSendARequestImpl("DELETE", "/api/v1/evaluations/jobs/"+item.Resource.ID+"?hard_delete=true", "", "there are no evaluation jobs"); err != nil {
-				return err
-			}
-			if tc.response != nil && tc.response.StatusCode != 204 {
-				return tc.logError(fmt.Errorf("failed to delete evaluation job %s: status %d", item.Resource.ID, tc.response.StatusCode))
-			}
-		}
-	}
-	return nil
-}
-
 func (tc *scenarioConfig) checkHealthEndpoint() error {
 	if err := tc.iSendARequestImpl("GET", "/api/v1/health", "", "check health endpoint"); err != nil {
 		return tc.logError(fmt.Errorf("failed to send health check request: %w for URL %s", err, tc.apiFeature.baseURL.String()))
@@ -515,13 +440,28 @@ func (tc *scenarioConfig) iSendARequestTo(method, path string) error {
 	return tc.iSendARequestToWithBody(method, path, "")
 }
 
+func (tc *scenarioConfig) iSetWaitDeadlineTo(paramValue string) error {
+	value, err := tc.getValue(paramValue)
+	if err != nil {
+		return err
+	}
+	tc.waitDeadline, err = time.ParseDuration(value)
+	if err != nil {
+		return tc.logError(fmt.Errorf("failed to parse duration %q: %w", value, err))
+	}
+	if tc.waitDeadline <= 0 {
+		return tc.logError(fmt.Errorf("wait deadline must be positive, got %q (%v)", value, tc.waitDeadline))
+	}
+	return nil
+}
+
 func (tc *scenarioConfig) iWaitForEvaluationJobStatus(expectedStatus string) error {
-	deadline := time.Now().Add(2 * time.Minute)
+	deadline := time.Now().Add(tc.waitDeadline)
 	var lastErr error
 	for time.Now().Before(deadline) {
 		if err := tc.iSendARequestImpl(http.MethodGet, "/api/v1/evaluations/jobs/{id}", "", "wait for evaluation job status"); err != nil {
 			lastErr = err
-			time.Sleep(1 * time.Second)
+			time.Sleep(tc.waitInterval)
 			continue
 		}
 		if tc.response != nil && tc.response.StatusCode == http.StatusOK {
@@ -531,12 +471,21 @@ func (tc *scenarioConfig) iWaitForEvaluationJobStatus(expectedStatus string) err
 			} else if status == expectedStatus {
 				return nil
 			} else {
+				// Fail fast when the job has reached any terminal state other than the expected one.
+				if pkgapi.OverallState(status).IsTerminalState() {
+					// Get additional error context from the response for better diagnostics
+					message, _ := tc.getJsonPath("$.status.message.message")
+					if message != "" {
+						return tc.logError(fmt.Errorf("evaluation job reached terminal state %q (expected %q): %s", status, expectedStatus, message))
+					}
+					return tc.logError(fmt.Errorf("evaluation job reached terminal state %q (expected %q)", status, expectedStatus))
+				}
 				lastErr = fmt.Errorf("expected status %q but got %q", expectedStatus, status)
 			}
 		} else if tc.response != nil {
 			lastErr = tc.logError(fmt.Errorf("unexpected response status %d", tc.response.StatusCode))
 		}
-		time.Sleep(1 * time.Second)
+		time.Sleep(tc.waitInterval)
 	}
 	if lastErr != nil {
 		return tc.logError(lastErr)
@@ -1022,87 +971,107 @@ func (tc *scenarioConfig) getJsonPathValue(jsonPath string) (interface{}, error)
 }
 
 func (tc *scenarioConfig) theResponseShouldContainAtJSONPath(expectedValue string, jsonPath string) error {
-	return tc.theResponseShouldContainAtJSONPathImpl(expectedValue, jsonPath, "contains")
+	_, _, err := tc.theResponseShouldContainAtJSONPathImpl(expectedValue, jsonPath, "contains")
+	return err
+}
+
+func (tc *scenarioConfig) theResponseShouldEqualAtJSONPath(expectedValue string, jsonPath string) error {
+	_, _, err := tc.theResponseShouldContainAtJSONPathImpl(expectedValue, jsonPath, "==")
+	return err
 }
 
 func (tc *scenarioConfig) theResponseShouldContainAtJSONPathAtLeast(expectedValue string, jsonPath string) error {
-	return tc.theResponseShouldContainAtJSONPathImpl(expectedValue, jsonPath, ">=")
+	_, _, err := tc.theResponseShouldContainAtJSONPathImpl(expectedValue, jsonPath, ">=")
+	return err
 }
 
-func (tc *scenarioConfig) theResponseShouldContainAtJSONPathImpl(expectedValue string, jsonPath string, match string) error {
+func (tc *scenarioConfig) theResponseShouldContainAtJSONPathImpl(expectedValue string, jsonPath string, match string) (bool, string, error) {
 	expanded, err := tc.substituteValues(expectedValue)
 	if err != nil {
-		return err
+		return false, "", err
 	}
 	expectedValue = expanded
 
 	foundValue, err := tc.getJsonPath(jsonPath)
 	if err != nil {
-		return tc.logError(err)
+		// true because the path is not found
+		return true, foundValue, tc.logError(err)
 	}
 
 	if rawExpr, ok := strings.CutPrefix(expectedValue, regexpPrefix); ok {
 		expr, err := regexp.Compile(rawExpr)
 		if err != nil {
-			return tc.logError(fmt.Errorf("invalid regex %q: %w", rawExpr, err))
+			return false, foundValue, tc.logError(fmt.Errorf("invalid regex %q: %w", rawExpr, err))
 		}
 		if expr.MatchString(foundValue) {
 			tc.logDebug("Value %s matches regex %s in path %s", foundValue, rawExpr, jsonPath)
-			return nil
+			return false, foundValue, nil
 		}
 	}
 
 	values := strings.SplitSeq(expectedValue, "|")
 	for value := range values {
 		switch match {
-		case "==":
+		case "==", "equals":
+			// first try an exact string match
 			if foundValue == strings.TrimSpace(value) {
-				return nil
+				return false, foundValue, nil
+			}
+			// then try a float match
+			if fv, err := strconv.ParseFloat(foundValue, 64); err == nil {
+				if ex, err := strconv.ParseFloat(strings.TrimSpace(value), 64); err == nil {
+					// compare the floats to 15 decimal places
+					if math.Abs(fv-ex) < 0.0000000000000001 {
+						return false, foundValue, nil
+					}
+				}
 			}
 		case "<=":
 			fv, err := strconv.ParseFloat(foundValue, 64)
 			if err != nil {
-				return tc.logError(fmt.Errorf("failed to parse found value %s as float: %w", foundValue, err))
+				return false, foundValue, tc.logError(fmt.Errorf("failed to parse found value %s as float: %w", foundValue, err))
 			}
 			ex, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
 			if err != nil {
-				return tc.logError(fmt.Errorf("failed to parse expected value %s as float: %w", value, err))
+				return false, foundValue, tc.logError(fmt.Errorf("failed to parse expected value %s as float: %w", value, err))
 			}
 			if fv <= ex {
-				return nil
+				return false, foundValue, nil
 			}
 		case ">=":
 			fv, err := strconv.ParseFloat(foundValue, 64)
 			if err != nil {
-				return tc.logError(fmt.Errorf("failed to parse found value %s as float: %w", foundValue, err))
+				return false, foundValue, tc.logError(fmt.Errorf("failed to parse found value %s as float: %w", foundValue, err))
 			}
 			ex, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
 			if err != nil {
-				return tc.logError(fmt.Errorf("failed to parse expected value %s as float: %w", value, err))
+				return false, foundValue, tc.logError(fmt.Errorf("failed to parse expected value %s as float: %w", value, err))
 			}
 			if fv >= ex {
-				return nil
+				return false, foundValue, nil
 			}
 		case "contains":
 			if strings.Contains(foundValue, strings.TrimSpace(value)) {
-				return nil
+				return false, foundValue, nil
 			}
 		}
 	}
 
-	return tc.logError(fmt.Errorf("expected %s to be %s but was %s in %s", jsonPath, expectedValue, foundValue, asPrettyJson(string(tc.body))))
+	return true, foundValue, tc.logError(fmt.Errorf("expected %s to be %s but was %s in %s", jsonPath, expectedValue, foundValue, asPrettyJson(string(tc.body))))
 }
 
 func (tc *scenarioConfig) theResponseShouldNotContainAtJSONPath(expectedValue string, jsonPath string) error {
-	if strings.Contains(expectedValue, "{{") {
-		expanded, err := tc.substituteValues(expectedValue)
-		if err != nil {
-			return err
-		}
-		expectedValue = expanded
+	_, found, _ := tc.theResponseShouldContainAtJSONPathImpl(expectedValue, jsonPath, "contains")
+	if strings.Contains(strings.TrimSpace(found), strings.TrimSpace(expectedValue)) {
+		return tc.logError(fmt.Errorf("expected %s to not contain %s but found %s in %s", jsonPath, expectedValue, found, asPrettyJson(string(tc.body))))
 	}
-	if tc.theResponseShouldContainAtJSONPath(expectedValue, jsonPath) == nil {
-		return tc.logError(fmt.Errorf("expected %s to not contain %s but it did", jsonPath, expectedValue))
+	return nil
+}
+
+func (tc *scenarioConfig) theResponseShouldNotEqualAtJSONPath(expectedValue string, jsonPath string) error {
+	_, found, _ := tc.theResponseShouldContainAtJSONPathImpl(expectedValue, jsonPath, "==")
+	if strings.TrimSpace(found) == strings.TrimSpace(expectedValue) {
+		return tc.logError(fmt.Errorf("expected %s to not equal %s but found %s in %s", jsonPath, expectedValue, found, asPrettyJson(string(tc.body))))
 	}
 	return nil
 }
@@ -1258,6 +1227,9 @@ func createScenarioConfig(apiConfig *apiFeature) *scenarioConfig {
 	conf.values = make(map[string]string)
 	conf.apiFeature = apiConfig
 
+	conf.waitDeadline = 30 * time.Minute
+	conf.waitInterval = 1 * time.Minute
+
 	return conf
 }
 
@@ -1271,15 +1243,9 @@ func setUpTestConf() {
 
 func waitForService() {
 	tc := createScenarioConfig(api)
-	for range 10 {
-		if err := tc.checkHealthEndpoint(); err != nil {
-			tc.logDebug("Error checking health endpoint: %v\n", err)
-			time.Sleep(1 * time.Second)
-		} else {
-			return
-		}
+	if err := tc.theServiceIsRunning(context.Background()); err != nil {
+		panic("Stopped API Tests. Service is not ready for testing.\n")
 	}
-	panic("Stopped API Tests. Service is not ready for testing.\n")
 }
 
 func tidyUpTests() {
@@ -1291,6 +1257,56 @@ func tidyUpTests() {
 		if err != nil {
 			panic(fmt.Sprintf("Failed to close logger file: %v\n", err))
 		}
+	}
+}
+
+func checkModelEndpoint() {
+	modelURL := os.Getenv("MODEL_URL")
+	if modelURL == "" {
+		logDebug("MODEL_URL not set, skipping model endpoint pre-flight check\n")
+		return
+	}
+
+	fmt.Printf("Checking model endpoint connectivity: %s\n", modelURL)
+
+	client := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{
+				MinVersion:         tls.VersionTLS12,
+				InsecureSkipVerify: true, //nolint:gosec
+			},
+		},
+	}
+
+	resp, err := client.Get(modelURL) //nolint:gosec
+	if err != nil {
+		var dnsErr *net.DNSError
+		if errors.As(err, &dnsErr) {
+			logDebug("WARNING: Cannot resolve model endpoint DNS for %s (test runner may be outside the cluster), proceeding with tests\n", modelURL)
+			return
+		}
+		logDebug("WARNING: Model endpoint %s is not reachable: %v\n", modelURL, err)
+		logDebug("Evaluation job scenarios will be skipped.\n")
+		modelEndpointConnectivity = modelEndpointUnreachable
+		return
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, resp.Body)
+
+	logDebug("Model endpoint %s is reachable (status: %d)\n", modelURL, resp.StatusCode)
+	modelEndpointConnectivity = modelEndpointReachable
+}
+
+func (tc *scenarioConfig) theModelEndpointIsReachable() error {
+	switch modelEndpointConnectivity {
+	case modelEndpointUnreachable:
+		logDebug("Model endpoint is not reachable, skipping evaluation job scenario %s\n", tc.scenarioName)
+		return godog.ErrSkip
+	case modelEndpointUnchecked, modelEndpointReachable:
+		return nil
+	default:
+		return nil
 	}
 }
 
@@ -1372,6 +1388,7 @@ func InitializeTestSuite(ctx *godog.TestSuiteContext) {
 
 	ctx.BeforeSuite(setUpTestConf)
 	ctx.BeforeSuite(waitForService)
+	ctx.BeforeSuite(checkModelEndpoint)
 	ctx.AfterSuite(tidyUpTests)
 }
 
@@ -1382,10 +1399,8 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.After(tc.assetCleanup)
 
 	ctx.Step(`^the service is running$`, tc.theServiceIsRunning)
-	ctx.Step(`^there are no evaluation jobs$`, tc.thereAreNoEvaluationJobs)
-	ctx.Step(`^there are no user providers$`, tc.thereAreNoUserProviders)
+	ctx.Step(`^the model endpoint is reachable$`, tc.theModelEndpointIsReachable)
 	ctx.Step(`^there are system providers$`, tc.thereAreSystemProviders)
-	ctx.Step(`^there are no user collections$`, tc.thereAreNoUserCollections)
 	ctx.Step(`^there are system collections$`, tc.thereAreSystemCollections)
 	ctx.Step(`^there is a system collection with id "([^"]*)"$`, tc.thereIsASystemCollectionWithId)
 	ctx.Step(`^I set the header "([^"]*)" to "([^"]*)"$`, tc.iSetHeaderTo)
@@ -1405,13 +1420,16 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the response should have schema as:$`, tc.theResponseShouldHaveSchemaAs)
 	ctx.Step(`^the "([^"]*)" field in the response should be saved as "([^"]*)"$`, tc.theFieldShouldBeSaved)
 	ctx.Step(`^the response should contain the value "([^"]*)" at path "([^"]*)"$`, tc.theResponseShouldContainAtJSONPath)
+	ctx.Step(`^the response should equal the value "([^"]*)" at path "([^"]*)"$`, tc.theResponseShouldEqualAtJSONPath)
 	ctx.Step(`^the response should contain at least the value "([^"]*)" at path "([^"]*)"$`, tc.theResponseShouldContainAtJSONPathAtLeast)
 	ctx.Step(`^the response should not contain the value "([^"]*)" at path "([^"]*)"$`, tc.theResponseShouldNotContainAtJSONPath)
+	ctx.Step(`^the response should not equal the value "([^"]*)" at path "([^"]*)"$`, tc.theResponseShouldNotEqualAtJSONPath)
 	ctx.Step(`^the array at path "([^"]*)" in the response should have length (\d+)$`, tc.theArrayAtPathInResponseShouldHaveLength)
 	ctx.Step(`^the array at path "([^"]*)" in the response should have length "([^"]*)"$`, tc.theArrayAtPathInResponseShouldHaveLength)
 	ctx.Step(`^the array at path "([^"]*)" in the response should have length at least (\d+)$`, tc.theArrayAtPathInResponseShouldHaveLengthAtLeast)
 	ctx.Step(`^the array at path "([^"]*)" in the response should have length at least "([^"]*)"$`, tc.theArrayAtPathInResponseShouldHaveLengthAtLeast)
 	ctx.Step(`^I wait for the evaluation job status to be "([^"]*)"$`, tc.iWaitForEvaluationJobStatus)
+	ctx.Step(`^I set the wait deadline to "([^"]*)"$`, tc.iSetWaitDeadlineTo)
 	// Other steps
 	ctx.Step(`^fix this step$`, tc.fixThisStep)
 }

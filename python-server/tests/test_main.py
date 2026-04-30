@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from evalhub_server import __version__
 from evalhub_server.main import main
 
 
@@ -65,3 +66,32 @@ def test_binary_exit_code_propagated(mock_exit, mock_run, mock_path):
         main()
 
     mock_exit.assert_called_once_with(1)
+
+
+@pytest.mark.unit
+@patch("evalhub_server.main.get_binary_path", return_value="/fake/eval-hub")
+def test_version_flag_prints_version(mock_path, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        main(["--version"])
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert f"eval-hub-server {__version__}" in captured.out
+
+
+@pytest.mark.unit
+@patch("evalhub_server.main.get_binary_path", return_value="/fake/eval-hub")
+def test_version_short_flag(mock_path, capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        main(["-V"])
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert f"eval-hub-server {__version__}" in captured.out
+
+
+@pytest.mark.unit
+@patch("evalhub_server.main.get_binary_path", return_value="/fake/eval-hub")
+@patch("evalhub_server.main.subprocess.run")
+def test_version_flag_does_not_run_binary(mock_run, mock_path):
+    with pytest.raises(SystemExit):
+        main(["--version"])
+    mock_run.assert_not_called()
