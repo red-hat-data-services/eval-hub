@@ -12,9 +12,9 @@ import (
 type TransactionFunction func(*sql.Tx) error
 
 func (s *sqlStorage) withTransaction(name string, resourceID string, fn TransactionFunction) error {
-	txn, err := s.pool.BeginTx(s.ctx, nil)
+	txn, err := s.pool.BeginTx(s.ctx, &sql.TxOptions{Isolation: s.isolationLevel})
 	if err != nil {
-		s.logger.Error("Failed to begin transaction", "name", fmt.Sprintf("begin transaction %s", name), "resource_id", resourceID, "error", err.Error())
+		s.logger.Error("Failed to begin transaction", "name", fmt.Sprintf("begin transaction %s", name), "resource_id", resourceID, "isolation_level", s.isolationLevel.String(), "error", err.Error())
 		return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", fmt.Sprintf("begin transaction %s", name), "ResourceId", resourceID, "Error", err.Error())
 	}
 	servicerError := fn(txn)
@@ -32,12 +32,12 @@ func (s *sqlStorage) withTransaction(name string, resourceID string, fn Transact
 	}
 	if commit {
 		if txnErr := txn.Commit(); txnErr != nil {
-			s.logger.Error("Failed to commit transaction", "name", fmt.Sprintf("commit transaction %s", name), "resource_id", resourceID, "error", txnErr.Error())
+			s.logger.Error("Failed to commit transaction", "name", fmt.Sprintf("commit transaction %s", name), "resource_id", resourceID, "isolation_level", s.isolationLevel.String(), "error", txnErr.Error())
 			return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", fmt.Sprintf("commit transaction %s", name), "ResourceId", resourceID, "Error", txnErr.Error())
 		}
 	} else {
 		if txnErr := txn.Rollback(); txnErr != nil {
-			s.logger.Error("Failed to rollback transaction", "name", fmt.Sprintf("rollback transaction %s", name), "resource_id", resourceID, "error", txnErr.Error())
+			s.logger.Error("Failed to rollback transaction", "name", fmt.Sprintf("rollback transaction %s", name), "resource_id", resourceID, "isolation_level", s.isolationLevel.String(), "error", txnErr.Error())
 			return serviceerrors.NewServiceError(messages.DatabaseOperationFailed, "Type", fmt.Sprintf("rollback transaction %s", name), "ResourceId", resourceID, "Error", txnErr.Error())
 		}
 	}
