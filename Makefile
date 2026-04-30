@@ -1,4 +1,4 @@
-.PHONY: help autoupdate-precommit pre-commit clean build build-coverage build-service build-init build-sidecar build-all-platforms start-service stop-service start-sidecar stop-sidecar lint test test-fvt-server test-all test-coverage test-fvt-coverage test-fvt-server-coverage test-all-coverage install-deps update-deps get-deps fmt vet update-deps generate-public-docs verify-api-docs generate-ignore-file documentation check-unused-components fvt-report
+.PHONY: help autoupdate-precommit pre-commit clean build build-coverage build-service build-init build-sidecar build-mcp build-all-platforms start-service stop-service start-sidecar stop-sidecar lint test test-fvt-server test-all test-coverage test-fvt-coverage test-fvt-server-coverage test-all-coverage install-deps update-deps get-deps fmt vet update-deps generate-public-docs verify-api-docs generate-ignore-file documentation check-unused-components fvt-report docker-image-local
 
 GOPATH := $(shell go env GOPATH)
 GOBIN := $(shell go env GOPATH)/bin
@@ -10,6 +10,8 @@ INIT_BINARY_NAME = eval-runtime-init
 INIT_CMD_PATH = ./cmd/eval_runtime_init
 SIDECAR_BINARY_NAME = eval-runtime-sidecar
 SIDECAR_CMD_PATH = ./cmd/eval_runtime_sidecar
+MCP_BINARY_NAME = evalhub-mcp
+MCP_CMD_PATH = ./cmd/evalhub_mcp
 BIN_DIR = bin
 PORT ?= 8080
 
@@ -65,7 +67,7 @@ build-init: $(BIN_DIR) ## Build the eval-runtime-init binary only
 	@go build -race -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(INIT_BINARY_NAME) $(INIT_CMD_PATH)
 	@echo "Build complete: $(BIN_DIR)/$(INIT_BINARY_NAME)"
 
-build: build-service build-init build-sidecar ## Build the binaries
+build: build-service build-init build-sidecar build-mcp ## Build the binaries
 
 build-coverage: $(BIN_DIR) ## Build the binaries with coverage
 	@echo "Building $(BINARY_NAME)-cov with -cover -covermode=atomic -ldflags ${LDFLAGS} "
@@ -87,11 +89,11 @@ SERVICE_LOG ?= $(BIN_DIR)/service.log
 
 start-service: test-setup ${SERVER_PID_FILE} build-service ## Run the application in background
 	@echo "Running $(BINARY_NAME) on port $(PORT)..."
-	@. $(VENV_DIR)/bin/activate && ./scripts/start_server.sh "${SERVER_PID_FILE}" "${BIN_DIR}/$(BINARY_NAME)" "${SERVICE_LOG}" ${PORT} ""
+	@if [ -f $(VENV_DIR)/bin/activate ]; then . $(VENV_DIR)/bin/activate; else . $(VENV_DIR)/Scripts/activate; fi && ./scripts/start_server.sh "${SERVER_PID_FILE}" "${BIN_DIR}/$(BINARY_NAME)" "${SERVICE_LOG}" ${PORT} ""
 
 start-service-coverage: test-setup ${SERVER_PID_FILE} build-coverage ## Run the application in background
 	@echo "Running $(BINARY_NAME)-cov on port $(PORT)..."
-	@. $(VENV_DIR)/bin/activate && ./scripts/start_server.sh "${SERVER_PID_FILE}" "${BIN_DIR}/$(BINARY_NAME)-cov" "${SERVICE_LOG}" ${PORT} "${BIN_DIR}"
+	@if [ -f $(VENV_DIR)/bin/activate ]; then . $(VENV_DIR)/bin/activate; else . $(VENV_DIR)/Scripts/activate; fi && ./scripts/start_server.sh "${SERVER_PID_FILE}" "${BIN_DIR}/$(BINARY_NAME)-cov" "${SERVICE_LOG}" ${PORT} "${BIN_DIR}"
 
 stop-service:
 	-./scripts/stop_server.sh "${SERVER_PID_FILE}"
@@ -108,6 +110,11 @@ build-sidecar: $(BIN_DIR) ## Build only the sidecar binary
 	@echo "Building $(SIDECAR_BINARY_NAME) with ${LDFLAGS}"
 	@go build -race -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(SIDECAR_BINARY_NAME) $(SIDECAR_CMD_PATH)
 	@echo "Build complete: $(BIN_DIR)/$(SIDECAR_BINARY_NAME)"
+
+build-mcp: $(BIN_DIR) ## Build the evalhub-mcp MCP server binary
+	@echo "Building $(MCP_BINARY_NAME) with ${LDFLAGS}"
+	@go build -race -ldflags "${LDFLAGS}" -o $(BIN_DIR)/$(MCP_BINARY_NAME) $(MCP_CMD_PATH)
+	@echo "Build complete: $(BIN_DIR)/$(MCP_BINARY_NAME)"
 
 start-sidecar: build-sidecar ## Run the sidecar in background (port $(SIDECAR_PORT), config from $(SIDECAR_CONFIG_DIR))
 	@rm -f "${SIDECAR_PID_FILE}" && true
@@ -134,12 +141,12 @@ vet: ## Run go vet
 
 test: ## Run unit tests
 	@echo "Running unit tests..."
-	@bash -c 'set -o pipefail; go test -v ./auth/... ./internal/... ./cmd/... | ${PWD}/scripts/grcat ${PWD}/.conf.go-test'
+	@bash -c 'set -o pipefail; go test -v ./auth/... ./internal/... ./cmd/... ./pkg/... | ${PWD}/scripts/grcat ${PWD}/.conf.go-test'
 	@echo "Unit tests complete"
 
 test-coverage: $(BIN_DIR) ## Run unit tests with coverage
 	@echo "Running unit tests with coverage..."
-	@go test -v -race -coverprofile=$(BIN_DIR)/coverage.out -covermode=atomic ./auth/... ./internal/... ./cmd/...
+	@go test -v -race -coverprofile=$(BIN_DIR)/coverage.out -covermode=atomic ./auth/... ./internal/... ./cmd/... ./pkg/...
 	@go test -v -race -coverprofile=$(BIN_DIR)/coverage-init.out -covermode=atomic ./cmd/eval_runtime_init
 	@go tool cover -html=$(BIN_DIR)/coverage.out -o $(BIN_DIR)/coverage.html
 	@go tool cover -html=$(BIN_DIR)/coverage-init.out -o $(BIN_DIR)/coverage-init.html
@@ -157,7 +164,8 @@ SERVER_URL ?= http://localhost:8080
 
 FVT_TESTS ?= ./tests/features/...
 FVT_OUTPUT ?= --godog.format=junit:${PWD}/$(BIN_DIR)/junit-fvt-report.xml,pretty
-FVT_TAGS ?= "--godog.tags=~@ignore && ~@mlflow && ~@cluster"
+FVT_TAGS ?= --godog.tags=~@ignore && ~@mlflow && ~@cluster
+FVT_CONCURRENCY ?= 1
 
 .PHONY: test-setup
 test-setup: venv ## Set up Python test environment (venv + eval-hub-sdk adapter)
@@ -165,14 +173,14 @@ test-setup: venv ## Set up Python test environment (venv + eval-hub-sdk adapter)
 
 test-fvt: $(BIN_DIR) test-setup ## Run FVT (Functional Verification Tests) using godog
 	@echo "Running FVT tests..."
-	@. $(VENV_DIR)/bin/activate && bash -c 'set -o pipefail; go test ${FVT_TESTS} ${FVT_OUTPUT} ${FVT_TAGS} -v -race | ${PWD}/scripts/grcat ${PWD}/.conf.go-integration-test'
+	@if [ -f $(VENV_DIR)/bin/activate ]; then . $(VENV_DIR)/bin/activate; else . $(VENV_DIR)/Scripts/activate; fi && bash -c 'set -o pipefail; go test ${FVT_TESTS} ${FVT_OUTPUT} "${FVT_TAGS}" -v -race | ${PWD}/scripts/grcat ${PWD}/.conf.go-integration-test'
 
 test-fvt-server: start-service ## Run FVT tests using godog against a running server
 	@SERVER_URL="${SERVER_URL}" make test-fvt; status=$$?; make stop-service; exit $$status
 
 test-fvt-coverage: $(BIN_DIR)## Run integration (FVT) tests with coverage
 	@echo "Running integration (FVT) tests with coverage..."
-	@go test ${FVT_TESTS} ${FVT_OUTPUT} ${FVT_TAGS} -v -race -coverprofile=$(BIN_DIR)/coverage-fvt.out -covermode=atomic
+	@go test ${FVT_TESTS} ${FVT_OUTPUT} "${FVT_TAGS}" -v -race -coverprofile=$(BIN_DIR)/coverage-fvt.out -covermode=atomic
 	@go tool cover -html=$(BIN_DIR)/coverage-fvt.out -o $(BIN_DIR)/coverage-fvt.html
 	@echo "Coverage report generated: $(BIN_DIR)/coverage-fvt.html"
 
@@ -265,7 +273,7 @@ VENV_PYTHON = $(VENV_DIR)/bin/python
 venv: ## Create Python virtual environment using uv
 	@if [ ! -d "$(VENV_DIR)" ]; then \
 		echo "Creating uv virtual environment..."; \
-		uv venv $(VENV_DIR) --python 3.12; \
+		uv venv $(VENV_DIR) --python 3.11; \
 		echo "Virtual environment created at $(VENV_DIR)"; \
 	else \
 		echo "Virtual environment already exists at $(VENV_DIR)"; \
@@ -383,3 +391,12 @@ documentation: check-unused-components generate-public-docs verify-api-docs
 update-redocly-cli:
 	rm -f package-lock.json
 	npm install @redocly/cli@latest
+
+# Local image build (same Containerfile and BUILD_DATE arg as .github/workflows/ci.yml docker-build-push; CI also sets multi-arch push and registry tags).
+DOCKER_IMAGE_LOCAL ?= eval-hub:local
+DOCKER_BUILD_DATE ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+# Container build tool: podman or docker
+DOCKER ?= podman
+
+docker-image-local: ## Build the eval-hub Docker image locally from Containerfile
+	$(DOCKER) build -f Containerfile --build-arg "BUILD_DATE=$(DOCKER_BUILD_DATE)" -t "$(DOCKER_IMAGE_LOCAL)" .
