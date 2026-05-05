@@ -2,11 +2,11 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
-	"strconv"
-	"strings"
 
+	"github.com/eval-hub/eval-hub/internal/logging"
 	"github.com/go-playground/validator/v10"
 	"github.com/spf13/viper"
 )
@@ -19,18 +19,6 @@ type Config struct {
 	Transport string `mapstructure:"transport" validate:"required,oneof=stdio http"`
 	Host      string `mapstructure:"host"      validate:"required"`
 	Port      int    `mapstructure:"port,omitempty" validate:"omitempty,min=1,max=65535"`
-}
-
-type ProfileConfig struct {
-	DefaultProfile string              `mapstructure:"default_profile"`
-	Profiles       map[string]*Profile `mapstructure:"profiles"`
-}
-
-type Profile struct {
-	BaseURL  string `mapstructure:"base_url"`
-	Token    string `mapstructure:"token"`
-	Tenant   string `mapstructure:"tenant"`
-	Insecure *bool  `mapstructure:"insecure,omitempty"`
 }
 
 type Flags struct {
@@ -49,37 +37,29 @@ func DefaultConfig() *Config {
 	}
 }
 
-func defaultConfigPath() string {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".evalhub", "config.yaml")
-}
-
-// Load builds a Config using the precedence: CLI flags > YAML config > env vars.
-// Environment variables are applied first as the base layer, YAML config values
-// override them, and CLI flags (when explicitly set) override everything.
-func Load(flags *Flags) (*Config, error) {
-	cfg := DefaultConfig()
-
-	if err := applyEnvVars(cfg); err != nil {
-		return nil, err
-	}
-
-	configPath := defaultConfigPath()
+// Load builds a Config by merging DefaultConfig, optional YAML at flags.ConfigPath,
+// and bound EVALHUB_* environment variables using Viper (for each key, env overrides
+// the YAML file and defaults). Finally, any CLI fields that were explicitly set on
+// flags override the merged result.
+func Load(flags *Flags, logger *slog.Logger) (*Config, error) {
+	configPath := ""
 	if flags != nil && flags.ConfigPath != "" {
 		configPath = flags.ConfigPath
 	}
-	if err := applyYAMLConfig(cfg, configPath, flags); err != nil {
+	conf, err := applyYAMLConfig(DefaultConfig(), configPath)
+	if err != nil {
 		return nil, err
 	}
 
 	if flags != nil {
-		applyFlags(cfg, flags)
+		applyFlags(conf, flags)
 	}
 
-	return cfg, nil
+	if logger != nil {
+		logger.Info("Loaded configuration", "config", logging.AsPrettyJson(conf, "token"), "config_path", configPath)
+	}
+
+	return conf, nil
 }
 
 // Validate checks the Config using go-playground/validator struct tags.
@@ -93,91 +73,79 @@ func Validate(cfg *Config) error {
 	return nil
 }
 
-func applyEnvVars(cfg *Config) error {
-	if v := os.Getenv("EVALHUB_BASE_URL"); v != "" {
-		cfg.BaseURL = v
-	}
-	if v := os.Getenv("EVALHUB_TOKEN"); v != "" {
-		cfg.Token = v
-	}
-	if v := os.Getenv("EVALHUB_TENANT"); v != "" {
-		cfg.Tenant = v
-	}
-	if v := os.Getenv("EVALHUB_INSECURE"); v != "" {
-		b, err := strconv.ParseBool(v)
+func bindEnvs(v *viper.Viper, envs ...string) error {
+	for i := 0; i < len(envs); i += 2 {
+		err := v.BindEnv(envs[i], envs[i+1])
 		if err != nil {
-			return fmt.Errorf("invalid value for EVALHUB_INSECURE=%q: must be a boolean (true/false, 1/0)", v)
+			return fmt.Errorf("binding environment variable %s: %w", envs[i], err)
 		}
-		cfg.Insecure = b
 	}
 	return nil
 }
 
-// applyYAMLConfig reads a YAML config file using Viper and applies the active
-// profile's values over the current config. Missing default config files are
-// silently ignored; explicitly specified files that don't exist produce an error.
-func applyYAMLConfig(cfg *Config, path string, flags *Flags) error {
-	if path == "" {
-		return nil
+// applyYAMLConfig seeds Viper with cfg, binds EVALHUB_* env vars, then merges an
+// optional YAML file when path is non-empty (env still overrides merged values per
+// Viper precedence). When path is empty, only defaults and environment apply. When
+// path is set but the file does not exist, returns an error.
+func applyYAMLConfig(cfg *Config, path string) (*Config, error) {
+	v := viper.New()
+	err := bindEnvs(
+		v,
+		"base_url", "EVALHUB_BASE_URL",
+		"token", "EVALHUB_TOKEN",
+		"tenant", "EVALHUB_TENANT",
+		"insecure", "EVALHUB_INSECURE",
+		"transport", "EVALHUB_TRANSPORT",
+		"host", "EVALHUB_HOST",
+		"port", "EVALHUB_PORT",
+	)
+	if err != nil {
+		return nil, err
 	}
 
-	v := viper.New()
+	if cfg != nil {
+		v.SetDefault("base_url", cfg.BaseURL)
+		v.SetDefault("token", cfg.Token)
+		v.SetDefault("tenant", cfg.Tenant)
+		v.SetDefault("insecure", cfg.Insecure)
+		v.SetDefault("transport", cfg.Transport)
+		v.SetDefault("host", cfg.Host)
+		v.SetDefault("port", cfg.Port)
+	}
+
+	if path == "" {
+		var conf Config
+		if err := v.Unmarshal(&conf); err != nil {
+			return nil, fmt.Errorf("unmarshalling config: %w", err)
+		}
+		return &conf, nil
+	}
+
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path for config file: %w", err)
+	}
+	path = absPath
+	v.SetConfigType("yaml")
 	v.SetConfigFile(path)
 
-	if err := v.ReadInConfig(); err != nil {
+	if err := v.MergeInConfig(); err != nil {
 		if os.IsNotExist(err) {
-			if flags != nil && flags.ConfigPath != "" {
-				return fmt.Errorf("config file not found: %s", path)
-			}
-			return nil
+			return nil, fmt.Errorf("config file not found: %s", v.ConfigFileUsed())
 		}
 		// Viper wraps file-not-found in its own type
 		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
-			if flags != nil && flags.ConfigPath != "" {
-				return fmt.Errorf("config file not found: %s", path)
-			}
-			return nil
+			return nil, fmt.Errorf("config file not found: %s", v.ConfigFileUsed())
 		}
-		return fmt.Errorf("reading config file %s: %w", path, err)
+		return nil, fmt.Errorf("reading config file %s: %w", path, err)
 	}
 
-	var profileCfg ProfileConfig
-	if err := v.Unmarshal(&profileCfg); err != nil {
-		return fmt.Errorf("parsing config file %s: %w", path, err)
+	var conf Config
+	if err := v.Unmarshal(&conf); err != nil {
+		return nil, fmt.Errorf("unmarshalling config: %w", err)
 	}
 
-	if len(profileCfg.Profiles) == 0 {
-		return nil
-	}
-
-	profileName := profileCfg.DefaultProfile
-	if profileName == "" {
-		profileName = "default"
-	}
-
-	profile, ok := profileCfg.Profiles[profileName]
-	if !ok {
-		available := make([]string, 0, len(profileCfg.Profiles))
-		for k := range profileCfg.Profiles {
-			available = append(available, k)
-		}
-		return fmt.Errorf("profile %q not found in config file (available: %s)", profileName, strings.Join(available, ", "))
-	}
-
-	if profile.BaseURL != "" {
-		cfg.BaseURL = profile.BaseURL
-	}
-	if profile.Token != "" {
-		cfg.Token = profile.Token
-	}
-	if profile.Tenant != "" {
-		cfg.Tenant = profile.Tenant
-	}
-	if profile.Insecure != nil {
-		cfg.Insecure = *profile.Insecure
-	}
-
-	return nil
+	return &conf, nil
 }
 
 func applyFlags(cfg *Config, flags *Flags) {
