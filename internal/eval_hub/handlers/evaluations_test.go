@@ -1,7 +1,10 @@
 package handlers_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -12,6 +15,7 @@ import (
 	"github.com/eval-hub/eval-hub/internal/eval_hub/abstractions"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/executioncontext"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/handlers"
+	"github.com/eval-hub/eval-hub/internal/eval_hub/server"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/validation"
 	"github.com/eval-hub/eval-hub/pkg/api"
 )
@@ -841,5 +845,102 @@ func TestHandleCreateEvaluationRejectsEmptyExperimentName(t *testing.T) {
 	body := recorder.Body.String()
 	if !strings.Contains(body, "request_validation_failed") {
 		t.Fatalf("expected request_validation_failed in body, got %q", body)
+	}
+}
+
+func TestHandleListEvaluations_WriteJSON_logsExtraArgs(t *testing.T) {
+	t.Parallel()
+
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	storage := &listEvaluationsStorage{
+		fakeStorage: &fakeStorage{},
+		jobs: []api.EvaluationJobResource{
+			{Resource: api.EvaluationResource{Resource: api.Resource{ID: "job-1"}}},
+			{Resource: api.EvaluationResource{Resource: api.Resource{ID: "job-2"}}},
+		},
+	}
+	validate := validation.NewValidator()
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+
+	req := &listEvaluationsRequest{
+		MockRequest: createMockRequest("GET", "/api/v1/evaluations/jobs"),
+		queryValues: map[string][]string{},
+		pathValues:  map[string]string{},
+	}
+	recorder := httptest.NewRecorder()
+	ctx := executioncontext.NewExecutionContext(context.Background(), "req-writejson-extra", logger, "test-user", "test-tenant")
+	resp := server.NewRespWrapper(recorder, ctx)
+
+	h.HandleListEvaluations(ctx, req, resp)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d body %s", recorder.Code, recorder.Body.String())
+	}
+
+	var successRecord map[string]any
+	for _, line := range strings.Split(logBuf.String(), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		var obj map[string]any
+		if err := json.Unmarshal([]byte(line), &obj); err != nil {
+			t.Fatalf("log line is not JSON: %v\n%s", err, line)
+		}
+		if obj["msg"] == "Request successful" {
+			successRecord = obj
+			break
+		}
+	}
+	if successRecord == nil {
+		t.Fatalf("expected a Request successful log record, got:\n%s", logBuf.String())
+	}
+	nItems := float64(len(storage.jobs))
+	if successRecord["count"] != nItems {
+		t.Fatalf("log count: got %v want %v", successRecord["count"], nItems)
+	}
+	if successRecord["total_count"] != nItems {
+		t.Fatalf("log total_count: got %v want %v", successRecord["total_count"], nItems)
+	}
+}
+
+func TestHandleCreateEvaluationRejectsInvalidQueueName(t *testing.T) {
+	t.Parallel()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	storage := &fakeStorage{}
+	runtime := &fakeRuntime{}
+	validate := validation.NewValidator()
+	h := handlers.New(storage, validate, runtime, nil, nil)
+
+	invalidNames := []string{
+		"user-queue!@#$%",
+		"-starts-with-dash",
+		"ends-with-dash-",
+		"has spaces",
+		".starts-with-dot",
+	}
+	for _, name := range invalidNames {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			body := fmt.Sprintf(`{"name":"test-job","model":{"url":"http://test.com","name":"test"},"benchmarks":[{"id":"b","provider_id":"p"}],"queue":{"name":%q}}`, name)
+			req := &bodyRequest{
+				MockRequest: createMockRequest("POST", "/api/v1/evaluations/jobs"),
+				body:        []byte(body),
+			}
+			ctx := executioncontext.NewExecutionContext(context.Background(), "req-invalid-queue", logger, "test-user", "test-tenant")
+			recorder := httptest.NewRecorder()
+			resp := MockResponseWrapper{recorder: recorder}
+
+			h.HandleCreateEvaluation(ctx, req, resp)
+
+			if runtime.called {
+				t.Fatalf("did not expect runtime to be invoked for queue name %q", name)
+			}
+			if recorder.Code != 400 {
+				t.Fatalf("expected status 400 for queue name %q, got %d", name, recorder.Code)
+			}
+		})
 	}
 }

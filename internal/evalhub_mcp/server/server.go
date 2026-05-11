@@ -18,6 +18,7 @@ type ServerInfo struct {
 	Version   string
 	Build     string
 	BuildDate string
+	GitHash   string
 }
 
 func (s *ServerInfo) VersionString() string {
@@ -90,12 +91,17 @@ func NewEvalHubClient(cfg *config.Config, logger *slog.Logger) *evalhubclient.Cl
 // server. The server version resource is always registered. The EvalHub client
 // is captured by handler closures so that every handler has access to the API
 // without global state.
-func RegisterHandlers(srv *mcp.Server, client *evalhubclient.Client, info *ServerInfo, logger *slog.Logger) {
+func RegisterHandlers(srv *mcp.Server, client *evalhubclient.Client, info *ServerInfo, logger *slog.Logger) error {
 	registerVersionResource(srv, info, logger)
+	// should we error if no client is provided?
 	if client != nil {
+		if err := registerPrompts(srv, logger); err != nil {
+			return err
+		}
 		registerResources(srv, client, logger)
 		registerTools(srv, client, logger)
 	}
+	return nil
 }
 
 // CompletionHandlerOption returns a ServerOption that installs a completion handler
@@ -113,7 +119,9 @@ func CompletionHandlerOption(ds EvalHubDiscovery, logger *slog.Logger) *ServerOp
 func Run(ctx context.Context, cfg *config.Config, info *ServerInfo, logger *slog.Logger) error {
 	client := NewEvalHubClient(cfg, logger)
 	srv := New(info, logger, CompletionHandlerOption(client, logger))
-	RegisterHandlers(srv, client, info, logger)
+	if err := RegisterHandlers(srv, client, info, logger); err != nil {
+		return err
+	}
 
 	version := "unknown"
 	if info != nil {

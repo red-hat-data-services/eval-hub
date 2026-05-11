@@ -53,6 +53,7 @@ func TestVersionResourceJSONStructure(t *testing.T) {
 		Version:   "0.4.0",
 		Build:     "abc123",
 		BuildDate: "2026-04-30T10:00:00Z",
+		GitHash:   "abc123",
 	}
 
 	ctx, cs := connectWithVersion(t, info)
@@ -86,6 +87,7 @@ func TestVersionResourceMatchesBuildValues(t *testing.T) {
 		Version:   "1.2.3",
 		Build:     "deadbeef",
 		BuildDate: "2026-01-15T12:00:00Z",
+		GitHash:   "deadbeef",
 	}
 
 	ctx, cs := connectWithVersion(t, info)
@@ -128,7 +130,9 @@ func TestVersionResourceAvailableWithoutBackend(t *testing.T) {
 
 	info := &ServerInfo{Version: "0.1.0"}
 	srv := New(info, discardLogger, nil)
-	RegisterHandlers(srv, nil, info, discardLogger)
+	if err := RegisterHandlers(srv, nil, info, discardLogger); err != nil {
+		t.Fatalf("RegisterHandlers: %v", err)
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	t.Cleanup(cancel)
