@@ -12,28 +12,40 @@ import (
 	"github.com/spf13/viper"
 )
 
+// Transport mode names. Use TransportHTTP for remote clients; TransportHTTPSSE is
+// legacy HTTP+SSE (MCP 2024-11-05) and should only be enabled for older clients.
+const (
+	TransportStdio   = "stdio"
+	TransportHTTP    = "http"
+	TransportHTTPSSE = "http-sse"
+)
+
 type Config struct {
 	BaseURL       string `mapstructure:"base_url,omitempty" validate:"omitempty,url"`
 	Token         string `mapstructure:"token"`
 	Tenant        string `mapstructure:"tenant"`
 	Insecure      bool   `mapstructure:"insecure"`
-	Transport     string `mapstructure:"transport" validate:"required,oneof=stdio http"`
+	Transport     string `mapstructure:"transport" validate:"required,oneof=stdio http http-sse"` // default stdio; use http for remote
 	Host          string `mapstructure:"host"      validate:"required"`
 	Port          int    `mapstructure:"port,omitempty" validate:"omitempty,min=1,max=65535"`
 	ListPageLimit int    `mapstructure:"list_page_limit,omitempty" validate:"omitempty,min=1,max=2000"`
+	TLSCertFile   string `mapstructure:"tls_cert_file"`
+	TLSKeyFile    string `mapstructure:"tls_key_file"`
 }
 
 type Flags struct {
-	Transport  *string
-	Host       *string
-	Port       *int
-	Insecure   *bool
-	ConfigPath string
+	Transport   *string
+	Host        *string
+	Port        *int
+	Insecure    *bool
+	ConfigPath  string
+	TLSCertFile *string
+	TLSKeyFile  *string
 }
 
 func DefaultConfig() *Config {
 	return &Config{
-		Transport:     "stdio",
+		Transport:     TransportStdio,
 		Host:          "localhost",
 		Port:          3001,
 		ListPageLimit: evalhubclient.DefaultListPageLimit,
@@ -76,6 +88,21 @@ func normalizeListPageLimit(cfg *Config) {
 	}
 }
 
+// TLSEnabled returns true when both TLS cert and key files are configured.
+func (c *Config) TLSEnabled() bool {
+	return c.TLSCertFile != "" && c.TLSKeyFile != ""
+}
+
+// IsHTTPTransport returns true for any HTTP-based transport mode.
+func (c *Config) IsHTTPTransport() bool {
+	return c.Transport == TransportHTTP || c.Transport == TransportHTTPSSE
+}
+
+// IsLegacyHTTPTransport returns true for the deprecated HTTP+SSE transport (MCP 2024-11-05).
+func (c *Config) IsLegacyHTTPTransport() bool {
+	return c.Transport == TransportHTTPSSE
+}
+
 // Validate checks the Config using go-playground/validator struct tags.
 func Validate(cfg *Config) error {
 	normalizeListPageLimit(cfg)
@@ -83,6 +110,10 @@ func Validate(cfg *Config) error {
 
 	if err := validate.Struct(cfg); err != nil {
 		return fmt.Errorf("config validation failed: %w", err)
+	}
+
+	if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
+		return fmt.Errorf("config validation failed: tls_cert_file and tls_key_file must both be set or both be empty")
 	}
 
 	return nil
@@ -114,6 +145,8 @@ func applyYAMLConfig(cfg *Config, path string) (*Config, error) {
 		"host", "EVALHUB_HOST",
 		"port", "EVALHUB_PORT",
 		"list_page_limit", "EVALHUB_LIST_PAGE_LIMIT",
+		"tls_cert_file", "EVALHUB_TLS_CERT_FILE",
+		"tls_key_file", "EVALHUB_TLS_KEY_FILE",
 	)
 	if err != nil {
 		return nil, err
@@ -128,6 +161,8 @@ func applyYAMLConfig(cfg *Config, path string) (*Config, error) {
 		v.SetDefault("host", cfg.Host)
 		v.SetDefault("port", cfg.Port)
 		v.SetDefault("list_page_limit", cfg.ListPageLimit)
+		v.SetDefault("tls_cert_file", cfg.TLSCertFile)
+		v.SetDefault("tls_key_file", cfg.TLSKeyFile)
 	}
 
 	if path == "" {
@@ -177,5 +212,11 @@ func applyFlags(cfg *Config, flags *Flags) {
 	}
 	if flags.Insecure != nil {
 		cfg.Insecure = *flags.Insecure
+	}
+	if flags.TLSCertFile != nil {
+		cfg.TLSCertFile = *flags.TLSCertFile
+	}
+	if flags.TLSKeyFile != nil {
+		cfg.TLSKeyFile = *flags.TLSKeyFile
 	}
 }
