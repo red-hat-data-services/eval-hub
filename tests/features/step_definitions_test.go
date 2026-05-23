@@ -90,6 +90,13 @@ type scenarioConfig struct {
 
 	values map[string]string
 
+	// jsonnetHarnessEnv overrides process env in the jsonnet harness only (see jsonnetHarnessJSON).
+	jsonnetHarnessEnv map[string]string
+	// jsonnetHarnessEnvOmit drops keys from the harness env snapshot even when set in the process.
+	jsonnetHarnessEnvOmit []string
+	// jsonnetMlflowEnabled overrides harness.mlflow_enabled when non-nil.
+	jsonnetMlflowEnabled *bool
+
 	waitDeadline time.Duration
 	waitInterval time.Duration
 }
@@ -187,7 +194,7 @@ func (a *apiFeature) startLocalServer(port int) error {
 		return err
 	}
 	validate := validation.NewValidator()
-	serviceConfig, err := config.LoadConfig(logger, "0.4.0", "local", time.Now().Format(time.RFC3339))
+	serviceConfig, err := config.LoadConfig(logger, "0.4.1", "local", time.Now().Format(time.RFC3339))
 	if err != nil {
 		return logError(fmt.Errorf("failed to load service config: %w", err))
 	}
@@ -469,6 +476,7 @@ func (tc *scenarioConfig) iSetWaitDeadlineTo(paramValue string) error {
 func (tc *scenarioConfig) iWaitForEvaluationJobStatus(expectedStatus string) error {
 	deadline := time.Now().Add(tc.waitDeadline)
 	var lastErr error
+	var lastStatus string
 	for time.Now().Before(deadline) {
 		if err := tc.iSendARequestImpl(http.MethodGet, "/api/v1/evaluations/jobs/{id}", "", "wait for evaluation job status"); err != nil {
 			lastErr = err
@@ -477,6 +485,9 @@ func (tc *scenarioConfig) iWaitForEvaluationJobStatus(expectedStatus string) err
 		}
 		if tc.response != nil && tc.response.StatusCode == http.StatusOK {
 			status, err := tc.getJsonPath("$.status.state")
+			if status != "" {
+				lastStatus = status
+			}
 			if err != nil {
 				lastErr = err
 			} else if status == expectedStatus {
@@ -491,7 +502,8 @@ func (tc *scenarioConfig) iWaitForEvaluationJobStatus(expectedStatus string) err
 					}
 					return tc.logError(fmt.Errorf("evaluation job reached terminal state %q (expected %q)", status, expectedStatus))
 				}
-				lastErr = fmt.Errorf("expected status %q but got %q", expectedStatus, status)
+				// we should not do this because it will be logged as an error
+				// lastErr = fmt.Errorf("expected status %q but got %q", expectedStatus, status)
 			}
 		} else if tc.response != nil {
 			lastErr = tc.logError(fmt.Errorf("unexpected response status %d", tc.response.StatusCode))
@@ -501,20 +513,34 @@ func (tc *scenarioConfig) iWaitForEvaluationJobStatus(expectedStatus string) err
 	if lastErr != nil {
 		return tc.logError(lastErr)
 	}
-	return tc.logError(fmt.Errorf("timed out waiting for status %q", expectedStatus))
+	return tc.logError(fmt.Errorf("timed out waiting for status %q, last status: %q", expectedStatus, lastStatus))
 }
 
+var errTestFileNotFound = errors.New("test file not found")
+
 func (tc *scenarioConfig) findFile(fileName string) (string, error) {
-	file := filepath.Join("tests", "features", "test_data", fileName)
-	if _, err := os.Stat(file); os.IsNotExist(err) {
-		path, _ := os.Getwd()
-		return "", tc.logError(fmt.Errorf("test file %s not found in directory %s", fileName, path))
+	file := filepath.Join(testDataRoot(), fileName)
+	_, err := os.Stat(file)
+	if err == nil {
+		return file, nil
 	}
-	return file, nil
+	if os.IsNotExist(err) {
+		return "", errTestFileNotFound
+	}
+	return "", tc.logError(fmt.Errorf("stat test file %s: %w", fileName, err))
 }
 
 func (tc *scenarioConfig) getFile(fileName string) (string, error) {
+	if jsonnetPath, err := tc.findFile(tc.jsonnetSiblingName(fileName)); err == nil {
+		return tc.evaluateJsonnetFile(jsonnetPath)
+	} else if !errors.Is(err, errTestFileNotFound) {
+		return "", err
+	}
 	filePath, err := tc.findFile(fileName)
+	if errors.Is(err, errTestFileNotFound) {
+		path, _ := os.Getwd()
+		return "", tc.logError(fmt.Errorf("test file %s not found in directory %s", fileName, path))
+	}
 	if err != nil {
 		return "", err
 	}
@@ -665,6 +691,15 @@ func (tc *scenarioConfig) getValue(id string) (string, error) {
 	if value, err := tc.substituteValues(id); err == nil {
 		id = value
 	}
+	// Handle {variable} pattern by looking up in values map
+	if strings.HasPrefix(id, "{") && strings.HasSuffix(id, "}") {
+		n := strings.TrimSuffix(strings.TrimPrefix(id, "{"), "}")
+		v := tc.values[n]
+		if v == "" {
+			return "", tc.logError(fmt.Errorf("failed to find value for {%s}", n))
+		}
+		return v, nil
+	}
 	if strings.HasPrefix(id, valuePrefix) {
 		n := strings.TrimPrefix(id, valuePrefix)
 		v := tc.values[n]
@@ -793,6 +828,7 @@ func (tc *scenarioConfig) iSendARequestImpl(method, path, body, caller string) e
 				return tc.logError(fmt.Errorf("response does not contain an ID in response %s", string(tc.body)))
 			}
 			tc.addAsset(assetName, tc.lastId)
+			tc.values["id"] = tc.lastId
 		}
 	}
 
@@ -996,6 +1032,11 @@ func (tc *scenarioConfig) theResponseShouldContainAtJSONPathAtLeast(expectedValu
 	return err
 }
 
+func (tc *scenarioConfig) theResponseShouldMatchAtJSONPath(expectedValue string, jsonPath string) error {
+	_, _, err := tc.theResponseShouldContainAtJSONPathImpl(expectedValue, jsonPath, "matches")
+	return err
+}
+
 func (tc *scenarioConfig) theResponseShouldContainAtJSONPathImpl(expectedValue string, jsonPath string, match string) (bool, string, error) {
 	expanded, err := tc.substituteValues(expectedValue)
 	if err != nil {
@@ -1063,6 +1104,14 @@ func (tc *scenarioConfig) theResponseShouldContainAtJSONPathImpl(expectedValue s
 			}
 		case "contains":
 			if strings.Contains(foundValue, strings.TrimSpace(value)) {
+				return false, foundValue, nil
+			}
+		case "matches":
+			expr, err := regexp.Compile(value)
+			if err != nil {
+				return false, foundValue, tc.logError(fmt.Errorf("invalid regex %q: %w", strings.TrimSpace(value), err))
+			}
+			if expr.MatchString(foundValue) {
 				return false, foundValue, nil
 			}
 		}
@@ -1400,6 +1449,10 @@ func InitializeTestSuite(ctx *godog.TestSuiteContext) {
 	ctx.BeforeSuite(setUpTestConf)
 	ctx.BeforeSuite(waitForService)
 	ctx.BeforeSuite(checkModelEndpoint)
+
+	// Initialize GPU test suite hooks
+	InitializeGPUTestSuite(ctx)
+
 	ctx.AfterSuite(tidyUpTests)
 }
 
@@ -1433,6 +1486,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^the "([^"]*)" field in the response should be saved as "([^"]*)"$`, tc.theFieldShouldBeSaved)
 	ctx.Step(`^the response should contain the value "([^"]*)" at path "([^"]*)"$`, tc.theResponseShouldContainAtJSONPath)
 	ctx.Step(`^the response should equal the value "([^"]*)" at path "([^"]*)"$`, tc.theResponseShouldEqualAtJSONPath)
+	ctx.Step(`^the response should match the value "([^"]*)" at path "([^"]*)"$`, tc.theResponseShouldMatchAtJSONPath)
 	ctx.Step(`^the response should contain at least the value "([^"]*)" at path "([^"]*)"$`, tc.theResponseShouldContainAtJSONPathAtLeast)
 	ctx.Step(`^the response should not contain the value "([^"]*)" at path "([^"]*)"$`, tc.theResponseShouldNotContainAtJSONPath)
 	ctx.Step(`^the response should not equal the value "([^"]*)" at path "([^"]*)"$`, tc.theResponseShouldNotEqualAtJSONPath)
@@ -1444,4 +1498,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^I set the wait deadline to "([^"]*)"$`, tc.iSetWaitDeadlineTo)
 	// Other steps
 	ctx.Step(`^fix this step$`, tc.fixThisStep)
+
+	// GPU-specific steps
+	InitializeGPUSteps(ctx, tc)
 }

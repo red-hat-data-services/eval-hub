@@ -33,6 +33,25 @@ type Runtime struct {
 	Local *LocalRuntime `mapstructure:"local" yaml:"local" json:"local,omitempty"`
 }
 
+// GPUConfig declares the GPU resources required by an adapter.
+// Resource is the Kubernetes extended resource name (e.g. "nvidia.com/gpu", "amd.com/gpu").
+// When Resource is omitted, no specific GPU resource is requested in the pod spec —
+// node selection is left to Kueue ResourceFlavors or cluster defaults.
+// Count is the number of GPU units to request; must be ≥ 1 when GPU is specified.
+//
+// Kubernetes requires requests == limits for GPU extended resources, so both are set to Count.
+// When GPU is nil or Count is 0 the adapter is scheduled as CPU-only.
+//
+// NodeSelector is an optional map of node label key→value pairs added to the evaluation pod
+// to target a specific GPU model or node pool (e.g. {"nvidia.com/gpu.product": "NVIDIA-H100-SXM5-80GB"}).
+// NodeSelector is ignored when the evaluation job is submitted with a queue — in that case
+// Kueue's ResourceFlavors govern node selection.
+type GPUConfig struct {
+	Resource     string            `mapstructure:"resource" yaml:"resource" json:"resource,omitempty"`
+	Count        int               `mapstructure:"count" yaml:"count" json:"count"`
+	NodeSelector map[string]string `mapstructure:"node_selector" yaml:"node_selector" json:"node_selector,omitempty"`
+}
+
 // ProviderRuntime contains runtime configuration for Kubernetes jobs.
 //
 // Example YAML for provider configs:
@@ -45,6 +64,11 @@ type Runtime struct {
 //	  memory_request: "512Mi"
 //	  cpu_limit: "1"
 //	  memory_limit: "2Gi"
+//	  gpu:
+//	    resource: nvidia.com/gpu         # omit to leave GPU resource unspecified (any GPU)
+//	    count: 1
+//	    node_selector:                   # optional; ignored when a queue is specified
+//	      nvidia.com/gpu.product: NVIDIA-H100-SXM5-80GB
 //	  default_env:
 //	    - name: FOO
 //	      value: "bar"
@@ -55,7 +79,10 @@ type K8sRuntime struct {
 	MemoryRequest string   `mapstructure:"memory_request" yaml:"memory_request"`
 	CPULimit      string   `mapstructure:"cpu_limit" yaml:"cpu_limit"`
 	MemoryLimit   string   `mapstructure:"memory_limit" yaml:"memory_limit"`
-	Env           []EnvVar `mapstructure:"env" yaml:"env"`
+	// GPU declares the GPU resource requirement for this adapter. Omit entirely for CPU-only
+	// adapters — existing adapters are unaffected.
+	GPU *GPUConfig `mapstructure:"gpu" yaml:"gpu" json:"gpu,omitempty"`
+	Env []EnvVar   `mapstructure:"env" yaml:"env"`
 }
 
 type LocalRuntime struct {

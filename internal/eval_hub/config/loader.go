@@ -83,6 +83,47 @@ func readConfig(logger *slog.Logger, name string, ext string, dirs ...string) (*
 	return configValues, err
 }
 
+// gpuNodeSelectorKeyDelimiter is used when unmarshaling node_selector only. The main Viper
+// instance uses "." which splits dotted label keys during struct Unmarshal; a dedicated
+// Viper with a different delimiter does not. See https://pkg.go.dev/github.com/spf13/viper#KeyDelimiter.
+const gpuNodeSelectorKeyDelimiter = "::"
+
+// parseGPUNodeSelector unmarshals node_selector from the value returned by Get on the main
+// Viper. Use Get, not AllSettings: AllSettings re-applies the "." delimiter and nests keys
+// like nvidia.com/gpu.product into map[nvidia][com/gpu][product].
+func parseGPUNodeSelector(raw any) (map[string]string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	selectorV := viper.NewWithOptions(viper.KeyDelimiter(gpuNodeSelectorKeyDelimiter))
+	if err := selectorV.MergeConfigMap(map[string]any{"node_selector": raw}); err != nil {
+		return nil, fmt.Errorf("merge node_selector config: %w", err)
+	}
+	var out struct {
+		NodeSelector map[string]string `mapstructure:"node_selector"`
+	}
+	if err := selectorV.Unmarshal(&out); err != nil {
+		return nil, fmt.Errorf("unmarshal node_selector: %w", err)
+	}
+	return out.NodeSelector, nil
+}
+
+func applyGPUNodeSelector(cfg *api.ProviderConfig, nodeSelector map[string]string) {
+	if len(nodeSelector) == 0 {
+		return
+	}
+	if cfg.Runtime == nil {
+		cfg.Runtime = &api.Runtime{}
+	}
+	if cfg.Runtime.K8s == nil {
+		cfg.Runtime.K8s = &api.K8sRuntime{}
+	}
+	if cfg.Runtime.K8s.GPU == nil {
+		cfg.Runtime.K8s.GPU = &api.GPUConfig{}
+	}
+	cfg.Runtime.K8s.GPU.NodeSelector = nodeSelector
+}
+
 func loadProvider(logger *slog.Logger, validate *validator.Validate, file string, dirs ...string) (*api.ProviderResource, string, error) {
 	type providerConfigInternal struct {
 		ID                 string `mapstructure:"id" yaml:"id" json:"id"`
@@ -94,8 +135,23 @@ func loadProvider(logger *slog.Logger, validate *validator.Validate, file string
 		return nil, "", err
 	}
 
+	// node_selector is stripped before Unmarshal because struct decode uses "." paths and
+	// cannot fill map[string]string; parseGPUNodeSelector re-decodes the Get() value with "::".
+	configPath := configValues.ConfigFileUsed()
+	var rawNodeSelector any
+	if configValues.IsSet("runtime.k8s.gpu.node_selector") {
+		rawNodeSelector = configValues.Get("runtime.k8s.gpu.node_selector")
+		configValues.Set("runtime.k8s.gpu.node_selector", nil)
+	}
 	if err := configValues.Unmarshal(&providerConfig); err != nil {
-		return nil, configValues.ConfigFileUsed(), err
+		return nil, configPath, err
+	}
+	if rawNodeSelector != nil {
+		nodeSelector, err := parseGPUNodeSelector(rawNodeSelector)
+		if err != nil {
+			return nil, configPath, err
+		}
+		applyGPUNodeSelector(&providerConfig.ProviderConfig, nodeSelector)
 	}
 	res := &api.ProviderResource{
 		Resource: api.Resource{

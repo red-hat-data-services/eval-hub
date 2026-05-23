@@ -23,6 +23,17 @@ var opts = godog.Options{
 
 // func TestFeatures(t *testing.T) {
 func TestMain(m *testing.M) {
+	for i, arg := range os.Args {
+		if after, ok := strings.CutPrefix(arg, "-test.run="); ok && after != "" && after != ".*" {
+			os.Exit(m.Run())
+		}
+		if arg == "-test.run" && i+1 < len(os.Args) {
+			if after := os.Args[i+1]; after != "" && after != ".*" {
+				os.Exit(m.Run())
+			}
+		}
+	}
+
 	godog.BindCommandLineFlags("godog.", &opts)
 
 	pflag.Parse()

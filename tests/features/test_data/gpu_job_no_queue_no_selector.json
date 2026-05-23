@@ -9,15 +9,12 @@
   "benchmarks": [
     {
       "id": "arc_easy",
-      "provider_id": "lm_evaluation_harness",
+      "provider_id": "gpu_test_provider",
       "parameters": {
-        "num_examples": 10,
-        "num_fewshot": 3,
-        "limit": 5,
-        "tokenizer": "google/flan-t5-small"
+        "num_examples": 10
       }
     }
   ],
-  "name": "test-evaluation-job",
-  "tags": [ "environment" ]
+  "name": "gpu-test-no-queue-no-selector",
+  "tags": ["gpu", "test", "scenario-1a"]
 }
