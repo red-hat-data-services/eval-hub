@@ -84,8 +84,8 @@ Feature: GPU Resource Management
   Scenario: GPU request with queue with nodeSelector that conflicts with ResourceFlavor
     Given the service is running
     And Kueue is installed on the cluster
-    And ClusterQueue "gpu-cluster-queue" with GPU ResourceFlavor "gpu-a100" exists
     And ResourceFlavor "gpu-a100" has nodeSelector "nvidia.com/gpu.product=A100-SXM4-40GB"
+    And ClusterQueue "gpu-cluster-queue" with GPU ResourceFlavor "gpu-a100" exists
     And LocalQueue "test-local-queue" in namespace "{{env:X_TENANT|test-tenant}}" exists
     When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/gpu_job_with_queue_with_selector_v100.json"
     Then the response code should be 202

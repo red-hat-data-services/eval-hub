@@ -1142,7 +1142,6 @@ func (tc *scenarioConfig) localQueueExists(localQueueName, namespace string) err
 }
 
 func (tc *scenarioConfig) resourceFlavorHasNodeSelector(flavorName, selectorKeyValue string) error {
-	// Skip if GPU_PRODUCT is not set (nodeSelector tests are skipped)
 	if os.Getenv("GPU_PRODUCT") == "" {
 		logDebug("Skipping ResourceFlavor nodeSelector check (GPU_PRODUCT not set)\n")
 		return nil
@@ -1155,12 +1154,32 @@ func (tc *scenarioConfig) resourceFlavorHasNodeSelector(flavorName, selectorKeyV
 	key := parts[0]
 	expectedValue := parts[1]
 
-	// Debug: get full nodeLabels first
-	debugCmd := exec.Command("oc", "get", "resourceflavor", flavorName, "-o", "jsonpath={.spec.nodeLabels}")
-	debugOutput, _ := debugCmd.CombinedOutput()
-	logDebug("DEBUG: ResourceFlavor %s nodeLabels: %s\n", flavorName, string(debugOutput))
+	// Ensure the ResourceFlavor exists with the specified nodeSelector (idempotent)
+	rfYAML := fmt.Sprintf(`
+apiVersion: kueue.x-k8s.io/v1beta1
+kind: ResourceFlavor
+metadata:
+  name: %s
+spec:
+  nodeLabels:
+    %s: %s
+`, flavorName, key, expectedValue)
+	if err := applyYAML(rfYAML); err != nil {
+		return tc.logError(fmt.Errorf("failed to ensure ResourceFlavor %s: %w", flavorName, err))
+	}
 
-	// Escape dots in key for JSONPath (nvidia.com/gpu.product -> nvidia\.com/gpu\.product)
+	found := false
+	for _, rf := range gpuResources.resourceFlavorsCreated {
+		if rf == flavorName {
+			found = true
+			break
+		}
+	}
+	if !found {
+		gpuResources.resourceFlavorsCreated = append(gpuResources.resourceFlavorsCreated, flavorName)
+	}
+
+	// Verify the nodeSelector was applied
 	escapedKey := strings.ReplaceAll(key, ".", "\\.")
 	jsonPath := fmt.Sprintf("jsonpath={.spec.nodeLabels.%s}", escapedKey)
 	cmd := exec.Command("oc", "get", "resourceflavor", flavorName, "-o", jsonPath)
