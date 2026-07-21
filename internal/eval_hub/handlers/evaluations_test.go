@@ -291,7 +291,7 @@ func TestHandleCreateEvaluationMarksFailedWhenRuntimeErrors(t *testing.T) {
 	runtime := &fakeRuntime{err: errors.New("runtime failed")}
 	validate := validation.NewValidator()
 
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-1", logger, time.Second, "test-user", "")
 
 	req := &bodyRequest{
@@ -335,7 +335,7 @@ func TestHandleCreateEvaluationSucceedsWhenRuntimeOk(t *testing.T) {
 	storage := &fakeStorage{providerConfigs: providerConfigs}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-2", logger, time.Second, "test-user", "test-tenant")
 
 	req := &bodyRequest{
@@ -370,7 +370,7 @@ func TestHandleCancelEvaluationWithSoftDeleteDoesNotCleanupResources(t *testing.
 	}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-3", logger, time.Second, "test-user", "test-tenant")
 
 	req := &deleteRequest{
@@ -412,7 +412,7 @@ func TestHandleDeleteEvaluationCleansUpResources(t *testing.T) {
 	}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-4", logger, time.Second, "test-user", "test-tenant")
 
 	req := &deleteRequest{
@@ -441,7 +441,7 @@ func TestHandleCreateEvaluationRejectsMissingBenchmarkID(t *testing.T) {
 	storage := &fakeStorage{}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 
 	req := &bodyRequest{
 		MockRequest: createMockRequest("POST", "/api/v1/evaluations/jobs"),
@@ -466,7 +466,7 @@ func TestHandleCreateEvaluationRejectsMissingBenchmarks(t *testing.T) {
 	storage := &fakeStorage{}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 
 	index := 1
 
@@ -501,7 +501,7 @@ func TestHandleCreateEvaluationRejectsMissingProviderID(t *testing.T) {
 	storage := &fakeStorage{}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 
 	req := &bodyRequest{
 		MockRequest: createMockRequest("POST", "/api/v1/evaluations/jobs"),
@@ -536,7 +536,7 @@ func TestHandleCreateEvaluationRejectsInvalidProviderID(t *testing.T) {
 	storage := &fakeStorage{providerConfigs: providerConfigs}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-invalid-provider", logger, time.Second, "test-user", "test-tenant")
 
 	req := &bodyRequest{
@@ -568,7 +568,7 @@ func TestHandleCreateEvaluationRejectsInvalidBenchmarkID(t *testing.T) {
 	storage := &fakeStorage{providerConfigs: providerConfigs}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-invalid-benchmark", logger, time.Second, "test-user", "test-tenant")
 
 	req := &bodyRequest{
@@ -598,7 +598,7 @@ func TestHandleListEvaluations(t *testing.T) {
 	}
 	validate := validation.NewValidator()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
 
 	req := &listEvaluationsRequest{
 		MockRequest: createMockRequest("GET", "/api/v1/evaluations/jobs"),
@@ -639,7 +639,7 @@ func TestHandleGetEvaluation(t *testing.T) {
 	}
 	validate := validation.NewValidator()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
 
 	req := &deleteRequest{
 		MockRequest: createMockRequest("GET", "/api/v1/evaluations/jobs/job-get"),
@@ -667,7 +667,7 @@ func TestHandleGetEvaluation_MissingPathParam(t *testing.T) {
 	storage := &fakeStorage{}
 	validate := validation.NewValidator()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
 
 	req := &deleteRequest{
 		MockRequest: createMockRequest("GET", "/api/v1/evaluations/jobs/"),
@@ -705,7 +705,7 @@ func TestHandleUpdateEvaluation(t *testing.T) {
 	}}
 	validate := validation.NewValidator()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil)
+	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil)
 
 	body := `{"benchmark_status_event":{"provider_id":"p1","id":"b1","status":"completed"}}`
 	req := &bodyRequest{
@@ -743,7 +743,7 @@ func TestHandleCreateEvaluationRejectsExperimentWhenMLflowDisabled(t *testing.T)
 	storage := &fakeStorage{providerConfigs: providerConfigs}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-mlflow-exp", logger, time.Second, "test-user", "test-tenant")
 
 	req := &bodyRequest{
@@ -782,7 +782,7 @@ func TestHandleCreateEvaluationRejectsEmptyExperimentName(t *testing.T) {
 	storage := &fakeStorage{providerConfigs: providerConfigs}
 	runtime := &fakeRuntime{}
 	validate := validation.NewValidator()
-	h := handlers.New(storage, validate, runtime, nil, nil)
+	h := handlers.New(storage, validate, runtime, nil, nil, nil)
 	ctx := executioncontext.NewExecutionContext(context.Background(), "req-empty-exp", logger, time.Second, "test-user", "test-tenant")
 
 	req := &bodyRequest{
