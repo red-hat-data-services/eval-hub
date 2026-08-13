@@ -19,6 +19,7 @@ import (
 	"github.com/eval-hub/eval-hub/internal/eval_hub/runtimes/k8s"
 	"github.com/eval-hub/eval-hub/internal/platform"
 	"github.com/eval-hub/eval-hub/pkg/mlflowclient"
+	"k8s.io/client-go/kubernetes"
 	"github.com/go-playground/validator/v10"
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
 
@@ -360,7 +361,17 @@ func (s *Server) setupDocsRoutes(h *handlers.Handlers, router *http.ServeMux) {
 
 func (s *Server) setupRoutes() (http.Handler, error) {
 	router := http.NewServeMux()
-	h := handlers.New(s.storage, s.validate, s.runtime, s.mlflowClient, s.serviceConfig)
+
+	var k8sClient *kubernetes.Clientset
+	if s.serviceConfig.IsAuthenticationEnabled() {
+		var err error
+		k8sClient, err = k8s.NewKubernetesClient()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
+		}
+	}
+
+	h := handlers.New(s.storage, s.validate, s.runtime, s.mlflowClient, s.serviceConfig, k8sClient)
 
 	// Health
 	s.setupHealthRoutes(h, router)
@@ -398,29 +409,25 @@ func (s *Server) setupRoutes() (http.Handler, error) {
 
 	// Wrap with metrics middleware (outermost for complete observability)
 	handler = Middleware(handler, prometheusEnabled, s.logger)
-	handler, err := s.setupAuth(handler)
+	handler, err := s.setupAuth(handler, k8sClient)
 	if err != nil {
 		return nil, err
 	}
 	return handler, nil
 }
 
-func (s *Server) setupAuth(handler http.Handler) (http.Handler, error) {
+func (s *Server) setupAuth(handler http.Handler, k8sClient *kubernetes.Clientset) (http.Handler, error) {
 	if s.serviceConfig.IsAuthenticationEnabled() {
-		client, err := k8s.NewKubernetesClient()
-		if err != nil {
-			return nil, fmt.Errorf("failed to create kubernetes client: %w", err)
-		}
-
-		handler, err = WithAuthorization(handler, s.logger, client, s.authConfig)
+		handler, err := WithAuthorization(handler, s.logger, k8sClient, s.authConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create authorization handler: %w", err)
 		}
-		handler, err = WithAuthentication(handler, s.logger, client, s.authConfig)
+		handler, err = WithAuthentication(handler, s.logger, k8sClient, s.authConfig)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create authentication handler: %w", err)
 		}
 		s.logger.Info("Authentication and authorization setup completed")
+		return handler, nil
 	}
 	return handler, nil
 }

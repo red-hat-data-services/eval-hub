@@ -137,6 +137,16 @@ func (h *Handlers) HandleCreateEvaluation(ctx *executioncontext.ExecutionContext
 		return
 	}
 
+	if h.k8sClient != nil && ctx.User != "" {
+		secretNames := collectSecretRefs(evaluation)
+		if len(secretNames) > 0 {
+			if err := checkSecretAccess(ctx.Ctx, h.k8sClient, ctx.User.String(), ctx.Tenant.String(), secretNames); err != nil {
+				w.Error(err, ctx.RequestID)
+				return
+			}
+		}
+	}
+
 	ApplyEvaluationJobQueueDefaults(evaluation)
 
 	mlflowExperimentID := ""
