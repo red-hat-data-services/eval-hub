@@ -285,6 +285,33 @@ func TestServiceConfig_HTTP(t *testing.T) {
 			t.Errorf("explicit: got %d", got)
 		}
 	})
+	t.Run("EffectiveMaxLogResponseBytes", func(t *testing.T) {
+		var c *config.ServiceConfig
+		if got := c.EffectiveMaxLogResponseBytes(); got != config.DefaultMaxLogResponseBytes {
+			t.Errorf("nil: got %d", got)
+		}
+		if got := (&config.ServiceConfig{}).EffectiveMaxLogResponseBytes(); got != config.DefaultMaxLogResponseBytes {
+			t.Errorf("zero: got %d", got)
+		}
+		if got := (&config.ServiceConfig{MaxLogResponseBytes: -1}).EffectiveMaxLogResponseBytes(); got != -1 {
+			t.Errorf("unlimited: got %d", got)
+		}
+		if got := (&config.ServiceConfig{MaxLogResponseBytes: 1024}).EffectiveMaxLogResponseBytes(); got != 1024 {
+			t.Errorf("explicit: got %d", got)
+		}
+	})
+	t.Run("EffectiveLogStreamTimeout", func(t *testing.T) {
+		var c *config.ServiceConfig
+		if got := c.EffectiveLogStreamTimeout(); got != config.DefaultLogStreamTimeout {
+			t.Errorf("nil: got %v", got)
+		}
+		if got := (&config.ServiceConfig{}).EffectiveLogStreamTimeout(); got != config.DefaultLogStreamTimeout {
+			t.Errorf("zero: got %v", got)
+		}
+		if got := (&config.ServiceConfig{LogStreamTimeout: 10 * time.Minute}).EffectiveLogStreamTimeout(); got != 10*time.Minute {
+			t.Errorf("explicit: got %v", got)
+		}
+	})
 	t.Run("ValidateHTTPConfig", func(t *testing.T) {
 		if err := (&config.ServiceConfig{}).ValidateHTTPConfig(); err != nil {
 			t.Errorf("empty: %v", err)
@@ -306,6 +333,15 @@ func TestServiceConfig_HTTP(t *testing.T) {
 		}
 		if err := (&config.ServiceConfig{MaxRequestBodyBytes: -2}).ValidateHTTPConfig(); err == nil {
 			t.Error("max body < -1: want error")
+		}
+		if err := (&config.ServiceConfig{MaxLogResponseBytes: -2}).ValidateHTTPConfig(); err == nil {
+			t.Error("max log response < -1: want error")
+		}
+		if err := (&config.ServiceConfig{MaxLogResponseBytes: -1}).ValidateHTTPConfig(); err != nil {
+			t.Errorf("max log response -1 should be valid: %v", err)
+		}
+		if err := (&config.ServiceConfig{LogStreamTimeout: -1}).ValidateHTTPConfig(); err == nil {
+			t.Error("negative log_stream_timeout: want error")
 		}
 	})
 }
