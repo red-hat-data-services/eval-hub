@@ -15,6 +15,15 @@ runtime:
     memory_request: 128Mi
     cpu_limit: 1000m
     memory_limit: 2Gi
+    # Evaluation Jobs mount the OpenShift service-serving CA at this path.
+    # RAGAS calls separately configured HTTPS embedding endpoints directly,
+    # rather than through the EvalHub model proxy, so make that CA available
+    # to both requests and httpx/OpenAI while retaining TLS verification.
+    env:
+      - name: REQUESTS_CA_BUNDLE
+        value: /etc/pki/ca-trust/source/anchors/service-ca.crt
+      - name: SSL_CERT_FILE
+        value: /etc/pki/ca-trust/source/anchors/service-ca.crt
   local:
     command: python tests/features/test_data/runtime/main.py
 benchmarks:
