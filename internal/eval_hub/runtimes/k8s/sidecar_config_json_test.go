@@ -3,8 +3,10 @@ package k8s
 import (
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/eval-hub/eval-hub/internal/eval_hub/config"
+	"github.com/eval-hub/eval-hub/internal/eval_hub/runtimes/shared"
 	"github.com/eval-hub/eval-hub/internal/otel"
 )
 
@@ -156,6 +158,68 @@ func TestSidecarForJobPodSetsIsGitJob(t *testing.T) {
 	}
 }
 
+func TestSidecarForJobPodSetsIsGitJobForHFSource(t *testing.T) {
+	cfg := &config.Config{
+		Sidecar: &config.SidecarConfig{BaseURL: config.DefaultSidecarBaseURL},
+	}
+	jc := &jobConfig{
+		jobID:      "hf-job-id",
+		evalHubURL: "http://eval-hub:8080",
+		testDataHF: hfTestDataConfig{
+			repoID: "cais/mmlu",
+		},
+	}
+
+	export, err := sidecarForJobPod(cfg, jc)
+	if err != nil {
+		t.Fatalf("sidecarForJobPod: %v", err)
+	}
+	if export.InitContainer == nil || !export.InitContainer.IsGitJob {
+		t.Fatal("expected InitContainer.IsGitJob=true in sidecar config for HF source job")
+	}
+}
+
+func TestSidecarForJobPodSetsIsGitJobWithoutEvalHubURL(t *testing.T) {
+	cfg := &config.Config{}
+
+	t.Run("git source", func(t *testing.T) {
+		jc := &jobConfig{
+			testDataGit: gitTestDataConfig{
+				url: "https://github.com/org/repo.git",
+				ref: "main",
+			},
+		}
+		export, err := sidecarForJobPod(cfg, jc)
+		if err != nil {
+			t.Fatalf("sidecarForJobPod: %v", err)
+		}
+		if export == nil {
+			t.Fatal("expected sidecar config, got nil")
+		}
+		if export.InitContainer == nil || !export.InitContainer.IsGitJob {
+			t.Fatal("expected InitContainer.IsGitJob=true for git source without eval hub URL")
+		}
+	})
+
+	t.Run("HF source", func(t *testing.T) {
+		jc := &jobConfig{
+			testDataHF: hfTestDataConfig{
+				repoID: "cais/mmlu",
+			},
+		}
+		export, err := sidecarForJobPod(cfg, jc)
+		if err != nil {
+			t.Fatalf("sidecarForJobPod: %v", err)
+		}
+		if export == nil {
+			t.Fatal("expected sidecar config, got nil")
+		}
+		if export.InitContainer == nil || !export.InitContainer.IsGitJob {
+			t.Fatal("expected InitContainer.IsGitJob=true for HF source without eval hub URL")
+		}
+	})
+}
+
 func TestSidecarForJobPodIsGitJobFalseForNonGitJob(t *testing.T) {
 	cfg := &config.Config{
 		Sidecar: &config.SidecarConfig{BaseURL: config.DefaultSidecarBaseURL},
@@ -173,6 +237,53 @@ func TestSidecarForJobPodIsGitJobFalseForNonGitJob(t *testing.T) {
 	if export.InitContainer != nil && export.InitContainer.IsGitJob {
 		t.Fatal("expected IsGitJob=false for non-git job")
 	}
+}
+
+func TestSidecarForJobPodSetsModelHTTPTimeout(t *testing.T) {
+	t.Run("default when operator does not override", func(t *testing.T) {
+		cfg := &config.Config{Sidecar: &config.SidecarConfig{BaseURL: config.DefaultSidecarBaseURL}}
+		jc := &jobConfig{
+			evalHubURL:     "http://eval-hub:8080",
+			modelTargetURL: "http://model.example/v1",
+		}
+		export, err := sidecarForJobPod(cfg, jc)
+		if err != nil {
+			t.Fatalf("sidecarForJobPod: %v", err)
+		}
+		if export.Model == nil {
+			t.Fatal("expected model in sidecar export")
+		}
+		if export.Model.HTTPTimeout != shared.DefaultModelHTTPTimeout {
+			t.Fatalf("HTTPTimeout = %v, want default %v", export.Model.HTTPTimeout, shared.DefaultModelHTTPTimeout)
+		}
+	})
+
+	t.Run("preserves operator override from sidecar config", func(t *testing.T) {
+		custom := 600 * time.Second
+		cfg := &config.Config{
+			Sidecar: &config.SidecarConfig{
+				BaseURL: config.DefaultSidecarBaseURL,
+				Model:   &config.SidecarModelConfig{HTTPTimeout: custom},
+			},
+		}
+		jc := &jobConfig{
+			evalHubURL:     "http://eval-hub:8080",
+			modelTargetURL: "http://model.example/v1",
+		}
+		export, err := sidecarForJobPod(cfg, jc)
+		if err != nil {
+			t.Fatalf("sidecarForJobPod: %v", err)
+		}
+		if export.Model == nil {
+			t.Fatal("expected model in sidecar export")
+		}
+		if export.Model.HTTPTimeout != custom {
+			t.Fatalf("HTTPTimeout = %v, want operator override %v", export.Model.HTTPTimeout, custom)
+		}
+		if export.Model.URL != "http://model.example/v1" {
+			t.Fatalf("URL = %q", export.Model.URL)
+		}
+	})
 }
 
 func TestSidecarForJobPod_UsesEffectiveBaseURL(t *testing.T) {
