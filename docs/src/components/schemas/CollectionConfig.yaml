@@ -33,12 +33,10 @@ properties:
   curation_order:
     type: integer
     description: >
-      Controls whether and where this collection appears on the Curated Collections
-      landing page. 0 (or absent) means not curated. Positive integers give the
-      tile position (lower value = higher on page; 1 appears before 2).
-      Set by system operators in YAML only; the server rejects writes from
-      tenant API consumers. System collections are sorted by curation_order
-      ascending, curated tiles before uncurated ones.
+      Controls the listing priority of this collection within collection retrieval results.
+      0 (or absent) means not curated. Positive integers specify priority — lower values
+      have higher priority. Set by system operators via YAML configuration only;
+      the server rejects writes from tenant API consumers.
   domains:
     type: array
     items:
@@ -81,13 +79,18 @@ properties:
       Business industries this collection is relevant for (snake_case).
       Collection-level field; the same benchmarks may serve different industries.
       Example values: health, telco, financial, government.
-  ai_entities:
+  evaluation_targets:
     type: array
     items:
       type: string
     description: >
       AI entity types this collection evaluates (snake_case).
+      If not explicitly set, the handler returns the union of evaluation_targets from
+      the collection's benchmarks (via BenchmarkResource.evaluation_targets).
       Example values: model, agent.
+  agent:
+    $ref: ./CollectionAgentMetadata.yaml
+    description: Structured metadata for AI agent discoverability at the collection level.
 required:
   - name
   - category

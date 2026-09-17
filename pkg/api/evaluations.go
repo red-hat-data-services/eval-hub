@@ -190,7 +190,7 @@ type GitTestDataRef struct {
 // The repository (or sub_path within it) is downloaded into /test_data before the adapter runs.
 // SecretRef is optional for public repositories; gated resources require a Kubernetes Secret.
 type HFTestDataRef struct {
-	RepoID    string `json:"repo_id" mapstructure:"repo_id" validate:"required"`
+	RepoID    string `json:"repo_id" mapstructure:"repo_id" validate:"notblank"`
 	Revision  string `json:"revision,omitempty" mapstructure:"revision,omitempty"`
 	SubPath   string `json:"sub_path,omitempty" mapstructure:"sub_path,omitempty"`
 	SecretRef string `json:"secret_ref,omitempty" mapstructure:"secret_ref,omitempty" validate:"omitempty,rfc1123_dns_label"`
@@ -394,14 +394,11 @@ type CollectionRef struct {
 	ID         string                      `mapstructure:"id" json:"id" validate:"required"`
 	Benchmarks []EvaluationBenchmarkConfig `json:"benchmarks,omitempty" validate:"omitempty,dive"`
 
-	// VersionCounter is the version counter of the referenced collection at the moment this
-	// evaluation job was created. Set by the server; never accepted from the client.
-	//
-	// Sentinel values:
-	//   0 — job predates version tracking; collection version at that time is unknown.
-	//  >0 — collection's VersionCounter at job-creation time. Two runs with the same
-	//       collection id and VersionCounter used an identical collection definition.
-	VersionCounter int `json:"version_counter,omitempty"`
+	// CollectionUpdatedAt captures the collection's updated_at timestamp at job-creation time.
+	// Set by the server; never accepted from the client.
+	// Compare against the current collection's updated_at to detect post-creation changes.
+	// Nil for jobs created before this field was introduced.
+	CollectionUpdatedAt *time.Time `json:"collection_updated_at,omitempty"`
 }
 
 // QueueConfig represents an optional scheduling queue under hardware_config
