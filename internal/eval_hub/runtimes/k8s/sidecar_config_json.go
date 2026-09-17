@@ -2,13 +2,14 @@ package k8s
 
 import (
 	"github.com/eval-hub/eval-hub/internal/eval_hub/config"
+	"github.com/eval-hub/eval-hub/internal/eval_hub/runtimes/shared"
 	"github.com/eval-hub/eval-hub/internal/otel"
 )
 
 // sidecarForJobPod builds sidecar_config.json for the job ConfigMap from server
 // sidecar YAML plus per-job fields. Omits sidecar_container (image/resources); that is only for job spec.
 func sidecarForJobPod(cfg *config.Config, jc *jobConfig) (*config.SidecarConfig, error) {
-	if cfg != nil && cfg.Sidecar == nil && jc != nil && jc.evalHubURL == "" && jc.mlflowTrackingURI == "" && jc.modelTargetURL == "" {
+	if cfg != nil && cfg.Sidecar == nil && jc != nil && jc.evalHubURL == "" && jc.mlflowTrackingURI == "" && jc.modelTargetURL == "" && !hasGitTestData(jc) && !hasHFTestData(jc) {
 		return nil, nil
 	}
 
@@ -31,7 +32,7 @@ func sidecarForJobPod(cfg *config.Config, jc *jobConfig) (*config.SidecarConfig,
 				export.EvalHub.InsecureSkipVerify = false
 			}
 		}
-		if hasGitTestData(jc) {
+		if hasGitTestData(jc) || hasHFTestData(jc) {
 			export.InitContainer = &config.InitContainerConfig{IsGitJob: true}
 		}
 		if jc.mlflowTrackingURI != "" {
@@ -47,11 +48,17 @@ func sidecarForJobPod(cfg *config.Config, jc *jobConfig) (*config.SidecarConfig,
 			export.MLFlow.CACertPath = mlflowCACertPathForJob(jc, cfg)
 		}
 		if jc.modelTargetURL != "" {
-			mc := &config.SidecarModelConfig{URL: jc.modelTargetURL}
+			mc := &config.SidecarModelConfig{
+				URL:         jc.modelTargetURL,
+				HTTPTimeout: shared.DefaultModelHTTPTimeout,
+			}
 			// AuthSecretMountPath is only set when a credentials secret is configured;
 			// open models have no secret mount but still use the sidecar proxy.
 			if jc.modelAuthSecretRef != "" {
 				mc.AuthSecretMountPath = modelAuthMountPath
+			}
+			if export.Model != nil && export.Model.HTTPTimeout > 0 {
+				mc.HTTPTimeout = export.Model.HTTPTimeout
 			}
 			export.Model = mc
 		}
