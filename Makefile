@@ -218,9 +218,11 @@ install-deps: ## Install dependencies
 	@go mod tidy
 	@echo "Dependencies installed"
 
+GO_VERSION = $(shell awk '/^go /{print $$2}' go.mod)
+
 update-deps: ## Update all dependencies to latest versions
 	@echo "Updating dependencies to latest versions..."
-	@go get -t -u ./...
+	@GOTOOLCHAIN=go${GO_VERSION} go get -t -u ./...
 	@go mod tidy
 	@echo "Dependencies updated"
 
@@ -347,7 +349,7 @@ cls:
 
 .PHONY: generate-public-docs verify-api-docs generate-ignore-file
 
-REDOCLY_CLI ?= ${PWD}/node_modules/.bin/redocly
+REDOCLY_CLI ?= ./node_modules/.bin/redocly
 
 ${REDOCLY_CLI}:
 	npm i @redocly/cli
