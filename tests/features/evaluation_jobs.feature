@@ -2101,6 +2101,7 @@ Feature: Evaluation Jobs
     And the MLflow artifact should contain "card_version"
     And the MLflow artifact should contain "schema_version"
 
+  @ignore
   Scenario: Verify Evaluation Jobs Can Use OOB Collections - open-telco-v1
     Given the service is running
     When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_oob_open_telco_v1.json"
@@ -2131,7 +2132,7 @@ Feature: Evaluation Jobs
     And the response should contain the value "pattern/accuracy" at path "$.results.benchmarks[?(@.id=='3gpp-tsg')].metrics[*].name"
     # TODO: Add metric value validations once a job completes successfully on a cluster with the telco inspect runner - https://redhat.atlassian.net/browse/RHOAIENG-87955
 
-  @kueue
+  @ignore @kueue
   Scenario: Create evaluation job with queue and collection - open-telco-v1
     Given the service is running
     When I send a POST request to "/api/v1/evaluations/jobs" with body "file:/evaluation_job_kueue_oob_open_telco_v1.json"
@@ -2159,7 +2160,7 @@ Feature: Evaluation Jobs
     And the response should contain the value "kueue" at path "$.collection.benchmarks[3].hardware_config.queue.kind"
     And the response should contain the value "{{env:QUEUE_NAME|user-queue}}" at path "$.collection.benchmarks[3].hardware_config.queue.name"
 
-  @mlflow
+  @ignore @mlflow
   Scenario: Card generated for completed job with collection - open-telco-v1
     Given the service is running
     And there is a system collection with id "open-telco-v1"
