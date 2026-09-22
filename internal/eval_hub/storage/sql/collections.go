@@ -72,8 +72,22 @@ func (s *sqlStorage) GetCollection(id string) (*api.CollectionResource, error) {
 }
 
 func (s *sqlStorage) getCollectionTransactional(txn *sql.Tx, id string) (*api.CollectionResource, error) {
+	return s.getCollectionTransactionalWithLock(txn, id, false)
+}
+
+func (s *sqlStorage) getCollectionTransactionalForUpdate(txn *sql.Tx, id string) (*api.CollectionResource, error) {
+	return s.getCollectionTransactionalWithLock(txn, id, true)
+}
+
+func (s *sqlStorage) getCollectionTransactionalWithLock(txn *sql.Tx, id string, forUpdate bool) (*api.CollectionResource, error) {
 	query := shared.EntityQuery{Resource: api.Resource{ID: id, Tenant: s.tenant}}
-	selectQuery, selectArgs, queryArgs := s.statementsFactory.CreateCollectionGetEntityStatement(&query)
+	var selectQuery string
+	var selectArgs, queryArgs []any
+	if forUpdate {
+		selectQuery, selectArgs, queryArgs = s.statementsFactory.CreateCollectionGetEntityForUpdateStatement(&query)
+	} else {
+		selectQuery, selectArgs, queryArgs = s.statementsFactory.CreateCollectionGetEntityStatement(&query)
+	}
 
 	err := s.queryRow(txn, selectQuery, selectArgs...).Scan(queryArgs...)
 	if err != nil {
@@ -121,7 +135,7 @@ func (s *sqlStorage) UpdateCollection(id string, collection *api.CollectionConfi
 	var updated *api.CollectionResource
 
 	err := s.withTransaction("update collection", id, func(txn *sql.Tx) error {
-		persistedCollection, err := s.getCollectionTransactional(txn, id)
+		persistedCollection, err := s.getCollectionTransactionalForUpdate(txn, id)
 		if err != nil {
 			return err
 		}
@@ -191,7 +205,7 @@ func (s *sqlStorage) UpdateCollectionStatus(id string, state *api.CollectionStat
 	var updated *api.CollectionResource
 
 	err := s.withTransaction("update collection state", id, func(txn *sql.Tx) error {
-		coll, err := s.getCollectionTransactional(txn, id)
+		coll, err := s.getCollectionTransactionalForUpdate(txn, id)
 		if err != nil {
 			return err
 		}
@@ -210,10 +224,14 @@ func (s *sqlStorage) PatchCollection(id string, patches *api.Patch) (*api.Collec
 	var updated *api.CollectionResource
 
 	err := s.withTransaction("patch collection", id, func(txn *sql.Tx) error {
-		persistedCollection, err := s.getCollectionTransactional(txn, id)
+		// Test hook: no-op unless a test installs a callback (see test_hooks.go).
+		invokeCollectionPatchBeforeLockedReadHook(id)
+		persistedCollection, err := s.getCollectionTransactionalForUpdate(txn, id)
 		if err != nil {
 			return err
 		}
+		// Test hook: no-op unless a test installs a callback (see test_hooks.go).
+		invokeCollectionPatchAfterLockedReadHook(id)
 		if persistedCollection.Resource.Owner == "system" || persistedCollection.CurationOrder > 0 {
 			return serviceerrors.NewServiceError(
 				messages.ReadOnlyCollection,
