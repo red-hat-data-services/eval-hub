@@ -44,8 +44,13 @@ func createApiFeature() (*apiFeature, error) {
 			timeout = time.Duration(eTimeout) * time.Second
 		}
 	}
+	// Avoid reusing idle connections that the ingress router may have closed.
+	// Clone to preserve the suite's TLS settings without changing other clients.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.DisableKeepAlives = true
 	client := &http.Client{
-		Timeout: timeout,
+		Timeout:   timeout,
+		Transport: transport,
 	}
 
 	if serverURL := os.Getenv("SERVER_URL"); serverURL != "" {
@@ -197,7 +202,7 @@ func (a *apiFeature) startLocalServer(port int) error {
 		return logError(fmt.Errorf("failed to create runtime: %w", err))
 	}
 
-	mlflowClient, err := mlflow.NewMLFlowClient(serviceConfig, logger)
+	mlflowClient, mlflowWorkspaceSupport, err := mlflow.NewMLFlowClient(serviceConfig, logger)
 	if err != nil {
 		return logError(fmt.Errorf("failed to create MLFlow client: %w", err))
 	}
@@ -207,7 +212,7 @@ func (a *apiFeature) startLocalServer(port int) error {
 		storage,
 		validate,
 		runtime,
-		mlflowClient)
+		mlflowClient, mlflowWorkspaceSupport)
 	if err != nil {
 		return err
 	}
