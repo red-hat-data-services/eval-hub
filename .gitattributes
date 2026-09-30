@@ -1,1 +1,6 @@
 *.cmd text eol=crlf
+
+# Keep this repo's centrally-managed (security-config) copy of .gitleaks.toml
+# when merging in upstream syncs from eval-hub/eval-hub. Requires the "ours"
+# merge driver to be registered locally: `git config merge.ours.driver true`.
+.gitleaks.toml merge=ours
