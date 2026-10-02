@@ -1,0 +1,11 @@
+title: StandalonePostProcessingRequest
+description: Request to create post-processing operations.
+allOf:
+  - $ref: ./PostProcessingCommon.yaml
+  - type: object
+    properties:
+      operations:
+        $ref: ./StandalonePostProcessingOperations.yaml
+    required:
+      - operations
+unevaluatedProperties: false
