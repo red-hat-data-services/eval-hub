@@ -45,7 +45,7 @@ require (
 	go.opentelemetry.io/proto/otlp v1.11.0
 	go.uber.org/zap v1.28.0
 	go.yaml.in/yaml/v4 v4.0.0-rc.6
-	google.golang.org/grpc v1.82.1
+	google.golang.org/grpc v1.82.2
 	gopkg.in/evanphx/json-patch.v4 v4.13.0
 	k8s.io/api v0.36.3
 	k8s.io/apimachinery v0.36.3
