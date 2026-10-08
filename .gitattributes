@@ -4,3 +4,7 @@
 # when merging in upstream syncs from eval-hub/eval-hub. Requires the "ours"
 # merge driver to be registered locally: `git config merge.ours.driver true`.
 .gitleaks.toml merge=ours
+
+docs/*.html linguist-generated
+docs/*.json linguist-generated
+docs/*.yaml linguist-generated
