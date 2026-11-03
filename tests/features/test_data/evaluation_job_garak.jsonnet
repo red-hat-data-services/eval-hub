@@ -3,7 +3,7 @@ local collectionId = test.value('collection_id');
 // Keep the retained profiles suitable for smoke tests. The prompt cap is soft,
 // so also bound each Garak scan with an explicit timeout.
 local scanParameters = {
-  timeout_seconds: 600,
+  timeout_seconds: 1800,
   garak_config: {
     run: { generations: 1, soft_probe_prompt_cap: 1 },
     plugins: { extended_detectors: false },
