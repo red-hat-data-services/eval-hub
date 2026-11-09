@@ -34,7 +34,7 @@ RUN BUILD_DATE="${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" && \
     go build -ldflags="${BUILD_LDFLAGS}" -a -installsuffix cgo -o evalhub-mcp ./cmd/evalhub_mcp
 
 # Runtime stage
-FROM registry.redhat.io/ubi9/ubi-minimal-pqc@sha256:c7fdcf2617a608d07f95fa01d8936fc8bf898096a60e5ebc432aae8ead50ea6c
+FROM registry.redhat.io/ubi9/ubi-minimal-pqc@sha256:ddaf8f8a845a39f7ab7d7caaed1bed0b9063eab6e22e52beece0924e91666c86
 
 # Create user and app directory
 RUN groupadd -g 1000 evalhub && \
