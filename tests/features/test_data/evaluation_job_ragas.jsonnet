@@ -10,6 +10,9 @@ local parameters = {
   num_examples: 1,
   embedding_model: requiredEmbeddingEnv('RAGAS_EMBEDDING_MODEL'),
 };
+local ragasTestDataRef(benchmarkId) = test.testDataRef(
+  test.benchmarkTestDataKey('ragas', benchmarkId)
+);
 
 test.mergeOptional(
   test.mergeOptional(
@@ -19,22 +22,10 @@ test.mergeOptional(
     } + if collectionId == '' then {
       benchmarks: [
         test.benchmark('ragas_rag_default', 'ragas', parameters) + {
-          test_data_ref: {
-            s3: {
-              bucket: 'ai-eng-canada',
-              key: 'datasets/ragas/dataset.jsonl',
-              secret_ref: 's3-ragas-credentials',
-            },
-          },
+          test_data_ref: ragasTestDataRef('ragas_rag_default'),
         },
         test.benchmark('ragas_rag_full', 'ragas', parameters) + {
-          test_data_ref: {
-            s3: {
-              bucket: 'ai-eng-canada',
-              key: 'datasets/ragas/dataset.jsonl',
-              secret_ref: 's3-ragas-credentials',
-            },
-          },
+          test_data_ref: ragasTestDataRef('ragas_rag_full'),
         },
       ],
       tags: ['benchmark-providers', 'ragas'],
