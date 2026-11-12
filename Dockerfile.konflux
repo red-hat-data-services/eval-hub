@@ -1,6 +1,6 @@
 # Multi-stage build for the evaluation hub Go service
 # Build stage
-FROM registry.access.redhat.com/ubi9/go-toolset@sha256:a2ad457dc7525635613d2355037239ca9bf4374ba3b59961d1cdaa4d5f1af7d8 AS builder
+FROM registry.access.redhat.com/ubi10/go-toolset:1.26@sha256:e94c38ff4a099b755af60c73ac87198c613f369eb7f818d45c96fbc3f21047de AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -34,13 +34,18 @@ RUN BUILD_DATE="${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" && \
     go build -ldflags="${BUILD_LDFLAGS}" -a -installsuffix cgo -o evalhub-mcp ./cmd/evalhub_mcp
 
 # Runtime stage
-FROM registry.redhat.io/ubi9/ubi-minimal-pqc:9.8@sha256:d638f3b49b79575329aacdae2739f954effe2467c12147711e73445c4fc97819
+FROM registry.redhat.io/ubi10/ubi-minimal:10.3@sha256:cc3d766e796fbb50d6fcd599f4bad4c231aeae41822c6e86e7da664a996221ca
 
-# Create user and app directory
-RUN groupadd -g 1000 evalhub && \
-    useradd -u 1000 -g evalhub -s /bin/bash -m evalhub && \
-    mkdir -p /app/docs && \
-    chown -R evalhub:evalhub /app
+# Create user and app directory.
+# UBI 10 minimal no longer ships shadow-utils (groupadd/useradd), and the Konflux
+# build is hermetic (no network/prefetched RPMs), so the group and passwd entries
+# are written directly instead of installing shadow-utils to run groupadd/useradd.
+RUN printf 'evalhub:x:1000:\n' >> /etc/group && \
+    printf 'evalhub:x:1000:1000:Eval Hub:/home/evalhub:/bin/bash\n' >> /etc/passwd && \
+    mkdir -p /home/evalhub /app/docs && \
+    if [ -d /etc/skel ]; then cp -a /etc/skel/. /home/evalhub/; fi && \
+    chown -R evalhub:evalhub /home/evalhub /app && \
+    chmod 700 /home/evalhub
 
 # Copy binaries from builder
 COPY --from=builder --chown=evalhub:evalhub /build/eval-hub /app/eval-hub
