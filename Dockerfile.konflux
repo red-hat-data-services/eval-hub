@@ -1,10 +1,6 @@
 # Multi-stage build for the evaluation hub Go service
 # Build stage
-# The builder must come from the go-toolset 1.27 stream: go.mod requires go 1.27.3.
-# The tag keeps the Go version readable; the digest pin (the current 1.27 manifest
-# list, Go 1.27.3) keeps the Konflux hermetic build reproducible. Renovate refreshes
-# the digest within the 1.27 tag.
-FROM registry.access.redhat.com/ubi9/go-toolset:1.27@sha256:a2ad457dc7525635613d2355037239ca9bf4374ba3b59961d1cdaa4d5f1af7d8 AS builder
+FROM registry.access.redhat.com/ubi9/go-toolset@sha256:a2ad457dc7525635613d2355037239ca9bf4374ba3b59961d1cdaa4d5f1af7d8 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
