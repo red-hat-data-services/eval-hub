@@ -89,12 +89,48 @@ Production environments should pin a specific full `major.minor.patch` tag (for 
 useful for development and testing but may point to an unreleased commit on `main` or
 `develop`.
 
+## Runtime platform requirements
+
+Published images use the Red Hat Enterprise Linux 10 userspace: `ubi10/go-toolset` for the
+build stage and `ubi10/ubi-minimal` for the runtime stage (see
+[`Dockerfile.konflux`](Dockerfile.konflux) and [`Containerfile`](Containerfile)).
+
+### x86-64 (amd64) requires x86-64-v3
+
+RHEL 10 / UBI 10 takes **x86-64-v3** as its microarchitecture baseline, and the runtime
+image records that requirement in its own binaries: `readelf -n /usr/bin/bash` and
+`readelf -n /usr/lib64/libc.so.6` inside `ubi10/ubi-minimal:10.3` report
+`GNU_PROPERTY_X86_ISA_1_NEEDED` as `x86-64-baseline, x86-64-v2, x86-64-v3` (AVX2, BMI1,
+BMI2, F16C, FMA, LZCNT and MOVBE are mandatory). The container therefore does not start on
+any CPU below x86-64-v3, which excludes hardware older than roughly Intel Haswell (2013)
+and AMD Excavator (2015).
+
+This applies to both sides of the image lifecycle:
+
+- **Builds** for `linux/amd64` use the same UBI 10 userspace, so the build host must be
+  x86-64-v3 capable — including Konflux amd64 build workers. Building only `aarch64`,
+  `ppc64le` or `s390x` does not need x86 hardware at all.
+- **Deployments** must schedule the container on x86-64-v3 nodes; clusters whose x86
+  workers predate x86-64-v3 are not supported for the `amd64` image.
+
+### Other architectures
+
+`aarch64`, `ppc64le` and `s390x` have no x86 ISA level; only the RHEL 10 architecture
+baseline applies to them.
+
+### Changing the baseline
+
+The baseline is inherited from the base images and cannot be lowered from this repository:
+supporting x86-64-v2-only hardware would require returning to a UBI 9 userspace. Any such
+change must be recorded here (see [Keeping this document useful](#keeping-this-document-useful)).
+
 ## Keeping this document useful
 
 Update this file when:
 
 - The API compatibility rules change
 - Image tagging behaviour in CI changes
+- The base images of the published containers change, including their hardware baseline
 - The preferred discovery links (releases, Quay, SDK) change
 
 Do **not** add a multi-column version matrix here. Record server releases in GitHub

@@ -150,6 +150,8 @@ Local mode connects directly to the API without kube-rbac-proxy and runs each ad
 - Python 3 (for `make test`; used by scripts/grcat for colored output)
 - [uv](https://docs.astral.sh/uv/) (manages the Python venv required by `make start-service` and FVT tests; run `make venv` to create it)
 - Podman (for container builds)
+- An x86-64-v3 capable CPU for `amd64` container builds and runs (UBI 10 baseline; see
+  [compatibility notes](COMPATIBILITY.md#runtime-platform-requirements))
 - Access to an OpenShift or Kubernetes cluster (for deployment)
 
 ### Run locally
