@@ -13,6 +13,17 @@ runtime:
     memory_request: 4Gi
     cpu_limit: 4000m
     memory_limit: 8Gi
+    env:
+    # LightEval resolves datasets and its runtime assets through the staged
+    # /test_data tree when a test_data_ref is supplied.
+    - name: HF_HOME
+      value: /test_data
+    - name: HF_HUB_CACHE
+      value: /test_data/hub
+    - name: HF_DATASETS_CACHE
+      value: /test_data/datasets
+    - name: XDG_CACHE_HOME
+      value: /test_data/cache
   local:
     # used for local mode tests (FVT)
     command: python tests/features/test_data/runtime/main.py

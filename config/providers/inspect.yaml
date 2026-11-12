@@ -20,6 +20,17 @@ runtime:
     memory_request: 8Gi
     cpu_limit: 2000m
     memory_limit: 32Gi
+    env:
+    # Inspect's datasets library must resolve staged HF caches instead of its
+    # image/user home when network access is unavailable.
+    - name: HF_HOME
+      value: /test_data
+    - name: HF_HUB_CACHE
+      value: /test_data/hub
+    - name: HF_DATASETS_CACHE
+      value: /test_data/datasets
+    - name: XDG_CACHE_HOME
+      value: /test_data/cache
   local:
     # used for local mode tests (FVT)
     # To run real benchmarks locally, override with the actual adapter path:
