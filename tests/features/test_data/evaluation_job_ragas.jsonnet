@@ -10,6 +10,19 @@ local parameters = {
   num_examples: 1,
   embedding_model: requiredEmbeddingEnv('RAGAS_EMBEDDING_MODEL'),
 };
+local ragasBenchmark(id) =
+  test.benchmark(id, 'ragas', parameters) +
+  // Disconnected runs use the benchmark-scoped MinIO bundle assigned by
+  // test.benchmark(). Connected runs retain the external RAGAS source.
+  if test.isDisconnected() then {} else {
+    test_data_ref: {
+      s3: {
+        bucket: 'ai-eng-canada',
+        key: 'datasets/ragas/dataset.jsonl',
+        secret_ref: 's3-ragas-credentials',
+      },
+    },
+  };
 
 test.mergeOptional(
   test.mergeOptional(
@@ -18,24 +31,8 @@ test.mergeOptional(
       name: 'test-evaluation-job-for-ragas-benchmark',
     } + if collectionId == '' then {
       benchmarks: [
-        test.benchmark('ragas_rag_default', 'ragas', parameters) + {
-          test_data_ref: {
-            s3: {
-              bucket: 'ai-eng-canada',
-              key: 'datasets/ragas/dataset.jsonl',
-              secret_ref: 's3-ragas-credentials',
-            },
-          },
-        },
-        test.benchmark('ragas_rag_full', 'ragas', parameters) + {
-          test_data_ref: {
-            s3: {
-              bucket: 'ai-eng-canada',
-              key: 'datasets/ragas/dataset.jsonl',
-              secret_ref: 's3-ragas-credentials',
-            },
-          },
-        },
+        ragasBenchmark('ragas_rag_default'),
+        ragasBenchmark('ragas_rag_full'),
       ],
       tags: ['benchmark-providers', 'ragas'],
     } else {},

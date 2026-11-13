@@ -1605,8 +1605,17 @@ func TestJsonnetRagasEmbeddingEndpoint(t *testing.T) {
 						t.Errorf("%s parameters.%s must use the model-auth Secret", id, key)
 					}
 				}
-				if benchmark.TestDataRef == nil || benchmark.TestDataRef.S3.Key != "datasets/ragas/dataset.jsonl" {
-					t.Errorf("%s lost its RAG dataset reference", id)
+				if benchmark.TestDataRef == nil {
+					t.Errorf("%s missing S3 test-data reference", id)
+					continue
+				}
+				if disconnected {
+					wantKey := "offline/fvt/benchmarks/ragas/" + id + "/"
+					if benchmark.TestDataRef.S3.Bucket != "mlpipeline" || benchmark.TestDataRef.S3.Key != wantKey || benchmark.TestDataRef.S3.SecretRef != "minio-test" {
+						t.Errorf("%s disconnected test-data ref = %+v, want MinIO bundle %q", id, benchmark.TestDataRef.S3, wantKey)
+					}
+				} else if benchmark.TestDataRef.S3.Key != "datasets/ragas/dataset.jsonl" || benchmark.TestDataRef.S3.SecretRef != "s3-ragas-credentials" {
+					t.Errorf("%s connected test-data ref = %+v, want external RAG source", id, benchmark.TestDataRef.S3)
 				}
 			}
 		})

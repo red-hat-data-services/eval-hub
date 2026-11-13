@@ -16,6 +16,11 @@ local harness = std.parseJson(std.extVar('harness'));
   mlflow(name)::
     if harness.mlflow_enabled then name else '',
 
+  // Whether this fixture is executing in disconnected mode. Fixtures that
+  // normally override test_data_ref for connected coverage can use this to
+  // retain the benchmark-scoped MinIO reference supplied by benchmark().
+  isDisconnected():: harness.disconnected,
+
   // Connected runs may select the serving model's tokenizer; offline runs use staged data.
   defaultTokenizer()::
     if harness.disconnected then '/test_data/tokenizer'
