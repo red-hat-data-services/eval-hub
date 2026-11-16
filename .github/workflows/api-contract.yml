@@ -1,0 +1,48 @@
+name: API contract
+
+# Compatibility and coverage checks for the Eval Hub API, run on every pull
+# request. The reusable workflows are pinned to the `latest` tag of
+# red-hat-data-services/api-contract-tests; see
+# https://github.com/red-hat-data-services/api-contract-tests/blob/main/docs/releasing.md
+# for how to move to another release tag or pin.
+#
+# Both jobs run in `mode: enforce`: a pull request that breaks a registered
+# contract fails the job. These are pull-request checks, not promotion gates.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  api-contract:
+    strategy:
+      fail-fast: false
+      matrix:
+        # One entry per contract in .rhoai/contracts.yaml. A new contract id
+        # must be added here, or its compatibility check never runs.
+        contract-id: [eval-hub-api-v1, eval-hub-api-internal-v1]
+    uses: red-hat-data-services/api-contract-tests/.github/workflows/provider-openapi-check.yml@latest
+    with:
+      contract-set: .rhoai/contracts.yaml
+      contract-id: ${{ matrix.contract-id }}
+      # The commit the RHOAI 3.6 release was based on: the newest commit shared
+      # with red-hat-data-services/eval-hub on rhoai-3.6, from
+      # `release_baseline.py lookup --release 3.6` against
+      # data/release-baselines/3.6.json (generated 2026-11-09). Keep in step
+      # with spec.baseline.refs. Never a branch, tag or HEAD.
+      baseline-refs: e150d67db9ffdf507511f2b8286eae75e11174c5
+      oasdiff-version: "1.33.0"
+      yq-version: "4.45.1"
+      mode: enforce
+
+  api-contract-coverage:
+    uses: red-hat-data-services/api-contract-tests/.github/workflows/provider-coverage-check.yml@latest
+    with:
+      contract-set: .rhoai/contracts.yaml
+      # Passed so coverage can flag a per-contract baseline that loosens this default.
+      baseline-refs: e150d67db9ffdf507511f2b8286eae75e11174c5
+      yq-version: "4.45.1"
+      mode: enforce
