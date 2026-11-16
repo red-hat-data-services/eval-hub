@@ -1,0 +1,59 @@
+apiVersion: contracts.rhoai.io/v1alpha1
+kind: ContractSet
+metadata:
+  name: eval-hub
+spec:
+  # Repository default baseline: the newest commit this repository and
+  # red-hat-data-services/eval-hub share on rhoai-3.6, i.e. the commit the
+  # RHOAI 3.6 release was based on. Taken from
+  #   python3 cmd/release-baseline/release_baseline.py lookup \
+  #     --release 3.6 --repo opendatahub-io/eval-hub
+  # which reads data/release-baselines/3.6.json (generated 2026-11-09).
+  # Release ref rhoai-3.6 was at 27caab0d5c70102de52597e449bcdc73379c5e25.
+  # Moving this forward needs approval from someone other than the author.
+  baseline:
+    refs: ["e150d67db9ffdf507511f2b8286eae75e11174c5"]
+
+  contracts:
+    # Public API: what the service serves at /openapi.yaml and what its
+    # consumers call. The base path is in the paths themselves, so matchPath
+    # is the /api/v1 prefix.
+    - id: eval-hub-api-v1
+      type: openapi
+      declaredArtifact: docs/openapi.yaml
+      matchPath: "^/api/v1(/|$)"
+      generator:
+        adapter: openapi.static
+        source: docs/openapi.yaml
+      policy:
+        oasdiffVersion: "1.33.0"
+        yqVersion: "4.45.1"
+        flattenAllOf: true
+
+    # Internal bundle: the same API plus the endpoints the public bundle hides
+    # (x-internal), including /api/v1/info and the job-events stream. Scoped to
+    # /api/v1 so the operational endpoints (/docs, /metrics, /openapi.yaml) stay
+    # out of the contract; coverage reports them as outside matchPath.
+    - id: eval-hub-api-internal-v1
+      type: openapi
+      declaredArtifact: docs/openapi-internal.yaml
+      matchPath: "^/api/v1(/|$)"
+      generator:
+        adapter: openapi.static
+        source: docs/openapi-internal.yaml
+      policy:
+        oasdiffVersion: "1.33.0"
+        yqVersion: "4.45.1"
+        flattenAllOf: true
+
+  exclusions:
+    - path: docs/openapi.json
+      reason: JSON rendering of docs/openapi.yaml, which is the registered eval-hub-api-v1 contract
+    - path: docs/openapi-internal.json
+      reason: JSON rendering of docs/openapi-internal.yaml, which is the registered eval-hub-api-internal-v1 contract
+    - path: docs/src/openapi.yaml
+      reason: >-
+        Single source of truth for the Redocly bundles. Both served bundles are registered
+        contracts, so this generator input is not a separate API. It is listed here because
+        the openapi.static adapter names the committed bundle, not this file, as its source;
+        a redocly bundle adapter would register it as a generator input instead.
