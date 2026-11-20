@@ -18,7 +18,7 @@ RUN go mod download
 COPY . .
 
 # Build arguments for versioning, please ensure to modify also in the Runtime stage below
-ARG BUILD_NUMBER=1.0.1
+ARG BUILD_NUMBER=1.0.4
 ARG BUILD_DATE
 ARG BUILD_PACKAGE=main
 ARG GIT_HASH
@@ -26,12 +26,12 @@ ARG GIT_HASH
 # Resolve the build timestamp once so all binaries share the same metadata.
 # An explicit BUILD_DATE takes precedence over the UTC compilation timestamp.
 RUN BUILD_DATE="${BUILD_DATE:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}" && \
-    export CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} GOEXPERIMENT=strictfipsruntime && \
+    export GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} GOEXPERIMENT=strictfipsruntime && \
     BUILD_LDFLAGS="-w -s -X '${BUILD_PACKAGE}.Build=${BUILD_NUMBER}' -X '${BUILD_PACKAGE}.BuildDate=${BUILD_DATE}' -X '${BUILD_PACKAGE}.GitHash=${GIT_HASH}'" && \
-    go build -ldflags="${BUILD_LDFLAGS}" -a -installsuffix cgo -o eval-hub ./cmd/eval_hub && \
-    go build -ldflags="${BUILD_LDFLAGS}" -a -installsuffix cgo -o eval-runtime-sidecar ./cmd/eval_runtime_sidecar && \
-    go build -ldflags="${BUILD_LDFLAGS}" -a -installsuffix cgo -o eval-runtime-init ./cmd/eval_runtime_init && \
-    go build -ldflags="${BUILD_LDFLAGS}" -a -installsuffix cgo -o evalhub-mcp ./cmd/evalhub_mcp
+    go build -ldflags="${BUILD_LDFLAGS}" -a -o eval-hub ./cmd/eval_hub && \
+    go build -ldflags="${BUILD_LDFLAGS}" -a -o eval-runtime-sidecar ./cmd/eval_runtime_sidecar && \
+    go build -ldflags="${BUILD_LDFLAGS}" -a -o eval-runtime-init ./cmd/eval_runtime_init && \
+    go build -ldflags="${BUILD_LDFLAGS}" -a -o evalhub-mcp ./cmd/evalhub_mcp
 
 # Runtime stage
 FROM registry.redhat.io/ubi9/ubi-minimal-pqc:9.8@sha256:d638f3b49b79575329aacdae2739f954effe2467c12147711e73445c4fc97819
@@ -65,7 +65,7 @@ ENV PORT=8080 \
     TZ=UTC
 
 # Redeclare build ARGs for labels (ARGs don't cross stage boundaries)
-ARG BUILD_NUMBER=1.0.1
+ARG BUILD_NUMBER=1.0.4
 ARG BUILD_DATE
 
 # Labels for metadata
