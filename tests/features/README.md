@@ -48,6 +48,12 @@ unset the path to use the temporary bypass. Prefer configuring a readable
 `FVT_CA_CERT_PATH` so the preflight verifies TLS like the other clients; remove
 the bypass once the runner CA is in place.
 
+When the test runner cannot reach a model endpoint because of its network path,
+set `MODEL_ENDPOINT_PREFLIGHT_WARN_ONLY=true` to continue with the evaluation
+scenarios. The in-cluster evaluation jobs remain responsible for validating
+model access; HTTP responses such as authentication failures are still treated
+as unreachable.
+
 ### Model Overrides (Required)
 
 Set the model fields in the test payloads using environment variables:
@@ -188,6 +194,77 @@ go test ./tests/features -run '^TestBenchmarkProviderFixtureCounts$'
 | `@git` | Evaluation jobs that clone offline test data from a git repository (`evaluation_jobs.feature`). Defaults: `TEST_DATA_GIT_URL`=`https://github.com/eval-hub/eval-hub`, `TEST_DATA_GIT_REF`=`main`, `TEST_DATA_GIT_SUB_PATH`=`tests/git-testdata` (`arc_easy` + tokenizer; see `tests/git-testdata/README.md`). The main happy-path job runs two git benchmarks (`arc_easy` + nested `truthfulqa_mc1` via `TEST_DATA_GIT_NESTED_SUB_PATH`, default `tests/git-testdata/staging_sub_path`) and asserts `resolved_sha` is absent on create then populated after completion. Optional: `TEST_DATA_GIT_TAG_REF`; `TEST_DATA_GIT_SHA_REF` / `TEST_DATA_GIT_SHA_URL` (SHA scenario defaults to `TEST_DATA_GIT_REF`/`main`; set `TEST_DATA_GIT_SHA_REF` to a real hex commit SHA for commit-checkout coverage), blocked-host via `TEST_DATA_GIT_BLOCKED_URL`, bad-ref via `TEST_DATA_GIT_BAD_REF`, http+secret_ref negative via `TEST_DATA_GIT_HTTP_URL`, missing sub_path via `TEST_DATA_GIT_BAD_SUB_PATH`. Job-wait negatives (bad ref, missing sub_path) poll every 10s for up to 5m (same as missing-PVC); API-only negatives return 400 immediately. Requires cluster egress to the git host (or an internal mirror). Until `tests/git-testdata` is on the target ref, set `TEST_DATA_GIT_REF` accordingly. Opt in with `GODOG_TAGS="@git"`. |
 | `@hf` | Evaluation jobs that download offline test data from Hugging Face Hub (`evaluation_jobs.feature`). Defaults: `TEST_DATA_HF_REPO_ID`=`eval-hub-test/evalhub-offline-testdata`, `TEST_DATA_HF_REVISION`=`main`, nested `truthfulqa_mc1` via `TEST_DATA_HF_NESTED_SUB_PATH`=`staging_sub_path` (public mirror of `tests/git-testdata` on HF). One happy-path job runs `arc_easy` (full repo, branch revision) + `truthfulqa_mc1` (nested `sub_path`) and asserts `resolved_sha` is absent on create then populated after completion; set `TEST_DATA_HF_SHA_REVISION` to a real hex commit SHA to exercise pinned revision on `arc_easy` without a separate scenario. Runtime failures: one job covers invalid `repo_id` + bad `revision`; missing `sub_path` stays a separate job. Optional env: `TEST_DATA_HF_BAD_REPO_ID` (default `eval-hub-test/invalid-db`), `TEST_DATA_HF_BAD_REVISION`, `TEST_DATA_HF_BAD_SUB_PATH`. Job-wait negatives poll every 10s for up to 5m; API-only negatives return 400 immediately. Requires cluster egress to huggingface.co (or configure the init image with `HF_ENDPOINT` for a mirror). Opt in with `GODOG_TAGS="@hf"`. |
 | `@gha-wheel-sanity` | Local-runtime wheel validation scenario run by `scripts/gha_wheel_sanity_test.sh` during GHA wheel checks |
+
+### Non-admin RBAC jobs
+
+Run the user and viewer features as separate jobs. Each job must use the token
+and `X-User` for the same identity; do not combine the role tags in one run.
+Set `X-Tenant` to the namespace being tested (for ATRIS, `tenant`). Both
+features are tagged `@cluster`, so the default `make test-fvt` run excludes
+them; set `GODOG_TAGS` explicitly for either non-admin job.
+
+| Job identity | Feature path | `GODOG_TAGS` |
+| --- | --- | --- |
+| EvalHub user | `tests/features/non_admin_user.feature` | `@non-admin_user` |
+| EvalHub viewer | `tests/features/non_admin_viewer.feature` | `@non-admin_viewer` |
+
+Configure a separate Jenkins job and identity credential for each row. In each
+job, `AUTH_TOKEN` and `X_USER` must belong to the same role identity. Set
+`SERVER_URL`, `X_TENANT`, `GODOG_PATHS`, and `GODOG_TAGS` to the matching
+feature and tag above. Supply these additional variables:
+
+| Job | Additional environment variables |
+| --- | --- |
+| User | `USER_COLLECTION_ID`, `USER_PROVIDER_ID`, `MODEL_URL`, `MODEL_NAME`, `MODEL_AUTH_SECRET_REF`, `MLFLOW_TRACKING_URI`, `MLFLOW_CA_CERT_PATH` (optional for a private MLflow CA), `MLFLOW_CLEANUP_TOKEN`, `WAIT_DEADLINE` |
+| Viewer | `VIEWER_JOB_ID`, `VIEWER_COLLECTION_ID`, `VIEWER_PROVIDER_ID`, `VIEWER_MLFLOW_EXPERIMENT_ID`, `MLFLOW_TRACKING_URI`, `MLFLOW_CA_CERT_PATH` (optional for a private MLflow CA), `WAIT_DEADLINE` |
+
+For example, the user job can run:
+
+```bash
+mkdir -p bin
+GODOG_PATHS=tests/features/non_admin_user.feature \
+GODOG_TAGS='@non-admin_user' \
+go test -v -timeout=360m ./tests/features
+```
+
+Use the viewer row's path and tag in the separate viewer job. Keep credentials
+in the Jenkins credential store; do not place tokens in feature files or logs.
+
+The resource IDs must identify existing resources in the selected tenant. The
+viewer's `VIEWER_JOB_ID` must identify a job that the viewer can read.
+
+The `@mlflow` scenarios need `MLFLOW_TRACKING_URI` for the same workspace. The
+direct RBAC probes verify MLflow TLS; they use system trust by default and add
+the PEM bundle in `MLFLOW_CA_CERT_PATH` when set. This is separate from
+`FVT_CA_CERT_PATH`, which configures the EvalHub API and other FVT clients. The
+user job feature submits model-backed evaluations, so `MODEL_URL` and
+`MODEL_NAME` must be usable and `MODEL_AUTH_SECRET_REF` must name a model-auth
+Secret in the tenant. `MLFLOW_CLEANUP_TOKEN` must be a separate credential
+authorized to search for and delete experiments in that workspace; keep it in
+the Jenkins credential store. Configure `WAIT_DEADLINE` if the default
+30-minute job wait is unsuitable.
+
+The expected permissions are:
+
+| Resource | Viewer | User |
+| --- | --- | --- |
+| EvalHub evaluations | `get`, `list` | `get`, `list`, `create`, `update`, `patch`, `delete` |
+| Collections and providers | `get`, `list` | `get`, `list` |
+| Evaluation status events | Writes denied | `create` denied |
+| MLflow experiments | Access denied | `get`, `list`, `create` allowed; `update`, `delete` denied |
+
+The user MLflow scenario creates a uniquely named experiment with `AUTH_TOKEN`
+and removes it in scenario teardown. The cleanup credential must not match
+`AUTH_TOKEN`. Cleanup runs even if an assertion fails after creation. For a
+local run, disable Bash tracing before exporting the token so xtrace does not
+write its expanded value to stderr:
+
+```bash
+set +x
+export MLFLOW_CLEANUP_TOKEN="$(oc whoami -t)"
+```
+
+With tracing disabled before the export, this command does not print the token.
 
 ### Disconnected benchmark fixture assets
 

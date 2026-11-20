@@ -291,10 +291,9 @@ lm-evaluation-harness checkout is the fork at
 alongside EvalHub on its `incubation` (or `stable`) branch, since only those
 branches provide the `Dockerfile.lmes-job` used for the LMES adapter image,
 not the default `main` branch. The operator
-checkout is always required. By default, `ADAPTERS` selects Inspect, LM
-Evaluation Harness, and FollowBench; their contrib and lm-evaluation-harness
-checkouts are needed. Set `ADAPTERS=all` to build all six curated adapters, or
-select a smaller list. Each repository is searched as a sibling of
+checkout is always required. By default, `ADAPTERS` selects only FollowBench,
+so the contrib checkout is needed. Set `ADAPTERS=all` to build all six curated
+adapters, or select a different list. Each repository is searched as a sibling of
 the EvalHub checkout first and then as `<parent>/<repo>` under each
 colon-separated `DEV_REPO_PARENT_PATHS` entry (default `~/code`); set that
 variable when the repositories live elsewhere. The command
@@ -690,7 +689,7 @@ Configuration is loaded from `config/config.yaml`, overridden by environment var
 | `MLFLOW_CA_CERT_PATH` | PEM CA bundle for MLflow TLS verification | (system roots) |
 | `OCI_PUSH_TIMEOUT` | Overall API-service registry push deadline (`sidecar.oci.push_timeout`); omitted or `0` uses the default | `5m` |
 | `LOG_LEVEL` | Logging level | `INFO` |
-| `EVALHUB_HARDWARE_PROFILES_NAMESPACE` | Platform namespace where OpenDataHub `HardwareProfile` CRs are fetched (Kubernetes runtime). Required for `hardware_config.hardware_profile_name` evaluations; typically `opendatahub` or `redhat-ods-applications`. Set by the TrustyAI Service Operator deployment. | _(unset — hardware profile lookups fail)_ |
+| `EVALHUB_HARDWARE_PROFILES_NAMESPACE` | Platform namespace where OpenDataHub `HardwareProfile` CRs are fetched (Kubernetes runtime). Required for `hardware_config.hardware_profile_name` evaluations; typically `opendatahub` or `redhat-ods-applications`. Set by the TrustyAI Service Operator deployment. When unset, or when the `HardwareProfile` CRD is not installed, `/api/v1/info` reports an empty `hardware_profiles` list. | _(unset — hardware profile discovery reports no profiles and `hardware_profile_name` evaluations fail validation)_ |
 
 Evaluation-result exports run asynchronously after the job reaches an eligible terminal state.
 The OCI push deadline starts after credential resolution and excludes MLflow export and status
