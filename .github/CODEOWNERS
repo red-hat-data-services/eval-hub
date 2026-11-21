@@ -1,2 +1,7 @@
 # Global fallback — all PRs need at least one approval
 * @eval-hub/maintainers
+
+# API contract configuration. The descriptor, the workflow and the baseline SHA
+# decide what the check protects, so a change to them needs an owner review.
+/.rhoai/ @eval-hub/maintainers
+/.github/workflows/api-contract.yml @eval-hub/maintainers

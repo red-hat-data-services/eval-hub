@@ -1,6 +1,6 @@
 # Multi-stage build for the evaluation hub Go service
 # Build stage
-FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/go-toolset:1.26 AS builder
+FROM --platform=$BUILDPLATFORM registry.access.redhat.com/ubi10/go-toolset:1.27 AS builder
 
 ARG TARGETARCH
 
@@ -17,7 +17,7 @@ RUN go mod download
 COPY . .
 
 # Build arguments for versioning, please ensure to modify also in the Runtime stage below
-ARG BUILD_NUMBER=1.0.4
+ARG BUILD_NUMBER=1.1.0
 ARG BUILD_DATE
 ARG BUILD_PACKAGE=main
 ARG GIT_HASH
@@ -89,7 +89,7 @@ ENV PORT=8080 \
     TZ=UTC
 
 # Redeclare build ARGs for labels (ARGs don't cross stage boundaries)
-ARG BUILD_NUMBER=1.0.4
+ARG BUILD_NUMBER=1.1.0
 ARG BUILD_DATE
 
 # Labels for metadata
