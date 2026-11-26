@@ -451,6 +451,10 @@ func checkModelEndpoint() {
 				return
 			}
 			logDebug("WARNING: Model endpoint %s is not reachable: %v\n", modelURL, err)
+			if os.Getenv("MODEL_ENDPOINT_PREFLIGHT_WARN_ONLY") == "true" {
+				logDebug("WARNING: MODEL_ENDPOINT_PREFLIGHT_WARN_ONLY=true; proceeding with evaluation scenarios\n")
+				return
+			}
 			logDebug("Evaluation job scenarios will be skipped.\n")
 			modelEndpointConnectivity = modelEndpointUnreachable
 			return
@@ -602,6 +606,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Before(tc.saveScenarioName)
 	ctx.Before(tc.requireMetricsURLForRemoteServer)
 	ctx.After(tc.assetCleanup)
+	ctx.After(tc.cleanupMLflowExperimentAfterScenario)
 
 	ctx.Step(`^the service is running$`, tc.theServiceIsRunning)
 	ctx.Step(`^OCI is configured$`, tc.ociIsConfigured)
@@ -656,6 +661,7 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^I wait for the evaluation job "([^"]*)" status to be "([^"]*)"$`, tc.iWaitForEvaluationJobStatusByID)
 	ctx.Step(`^I set the wait deadline to "([^"]*)"$`, tc.iSetWaitDeadlineTo)
 	ctx.Step(`^I set the wait interval to "([^"]*)"$`, tc.iSetWaitIntervalTo)
+	ctx.Step(`^I set the resource ID from environment variable "([^"]*)"$`, tc.setResourceIDFromEnvironment)
 	// Other steps
 	ctx.Step(`^fix this step$`, tc.fixThisStep)
 
@@ -666,6 +672,12 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	InitializeOTELSteps(ctx, tc)
 
 	// MLflow artifact steps
+	ctx.Step(`^the viewer cannot get, list, create, update, or delete MLflow experiments$`, tc.viewerCannotAccessMLflowExperiments)
+	ctx.Step(`^I create an MLflow experiment as the current user$`, tc.createMLflowExperimentAsCurrentUser)
+	ctx.Step(`^the current user can get the created MLflow experiment$`, tc.currentUserCanGetCreatedMLflowExperiment)
+	ctx.Step(`^the current user can list the created MLflow experiment$`, tc.currentUserCanListCreatedMLflowExperiment)
+	ctx.Step(`^the current user cannot update the created MLflow experiment$`, tc.currentUserCannotUpdateCreatedMLflowExperiment)
+	ctx.Step(`^the current user cannot delete the created MLflow experiment$`, tc.currentUserCannotDeleteCreatedMLflowExperiment)
 	ctx.Step(`^I fetch the MLflow artifact "([^"]*)" for run "([^"]*)"$`, tc.iFetchMLflowArtifact)
 	ctx.Step(`^I fetch the MLflow artifact "([^"]*)" for experiment "([^"]*)" and job "([^"]*)"$`, tc.iFetchMLflowArtifactByExperimentAndJob)
 	ctx.Step(`^I wait for the MLflow artifact "([^"]*)" for experiment "([^"]*)" and job "([^"]*)"$`, tc.iWaitForMLflowArtifactByExperimentAndJob)
@@ -678,7 +690,9 @@ func InitializeScenario(ctx *godog.ScenarioContext) {
 	ctx.Step(`^I wait for the evaluation job status to match "([^"]*)"$`, tc.iWaitForEvaluationJobStatusToMatch)
 
 	// OCI artifact steps
+	ctx.Step(`^I wait for the OCI export status to be "([^"]*)"$`, tc.iWaitForOCIExportStatus)
 	ctx.Step(`^I fetch the OCI manifest for repository "([^"]*)" and tag "([^"]*)"$`, tc.iFetchOCIManifestByRepoAndTag)
+	ctx.Step(`^I fetch the evaluation card OCI manifest for repository "([^"]*)" and tag "([^"]*)"$`, tc.iFetchOCIEvaluationCardManifestByRepoAndTag)
 	ctx.Step(`^the OCI manifest should not exist$`, tc.theOCIManifestShouldNotExist)
 	ctx.Step(`^the OCI manifest should contain annotation "([^"]*)" with value "([^"]*)"$`, tc.theOCIManifestShouldContainAnnotation)
 	ctx.Step(`^the OCI artifact should exist$`, tc.theOCIArtifactShouldExist)
