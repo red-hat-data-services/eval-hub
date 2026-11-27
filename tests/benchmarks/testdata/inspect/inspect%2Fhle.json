@@ -1,10 +1,29 @@
 {
-  "notes": "One sample per task. Agent/code benchmarks may require sandbox and external services; configure those in this fixture for the target environment. Petri/Bloom require JUDGE_MODEL_NAME, JUDGE_BASE_URL, and JUDGE_API_KEY for the judge. HLE/CyberSecEval require judge_api-key and judge_url in model.auth.secret_ref for an independent judge connection.",
+  "notes": "One sample with a single configured grader. Requires JUDGE_MODEL_NAME and judge_api-key/judge_url in MODEL_AUTH_SECRET_REF. Scorer prompts and metrics match knowledge-reasoning-v1.",
   "parameters": {
     "epochs": 1,
     "judge_model": "${JUDGE_MODEL_NAME}",
     "max_tasks": 1,
-    "num_examples": 1
+    "num_examples": 1,
+    "task_args": {
+      "scorer": {
+        "args": {
+          "instructions": "regex_judge_instructions",
+          "max_grader_attempts": 3,
+          "template": "regex_judge_template"
+        },
+        "graders": [
+          "grader"
+        ],
+        "metrics": [
+          "inspect_evals/hle/accuracy",
+          "inspect_evals/hle/stderr",
+          "inspect_evals/hle/cerr",
+          "inspect_evals/hle/unscored"
+        ],
+        "scorer": "inspect_evals/hle/regex_judge"
+      }
+    }
   },
   "timeout": "5m"
 }
