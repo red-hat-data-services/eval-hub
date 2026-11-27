@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/PaesslerAG/jsonpath"
+	pkgapi "github.com/eval-hub/eval-hub/pkg/api"
+	"github.com/eval-hub/eval-hub/pkg/ociclient"
 )
 
 // getOCIBearerToken exchanges OCI_USERNAME/OCI_PASSWORD for a Bearer token
@@ -103,6 +105,57 @@ func (tc *scenarioConfig) getOCIBearerToken(repository string) (string, error) {
 
 // --- OCI Artifact Step Definitions ---
 
+// iWaitForOCIExportStatus waits independently of the evaluation's terminal state.
+// The OCI worker may not have populated results.oci yet when evaluation completes.
+func (tc *scenarioConfig) iWaitForOCIExportStatus(expectedStatus string) error {
+	fetchJob := func() (*pkgapi.EvaluationJobResource, error) {
+		if err := tc.iSendARequestImpl(http.MethodGet, "/api/v1/evaluations/jobs/{id}", "", "wait for OCI export status"); err != nil {
+			return nil, err
+		}
+		if tc.response.StatusCode != http.StatusOK {
+			return nil, fmt.Errorf("unexpected response status %d: %s", tc.response.StatusCode, tc.body)
+		}
+		var job pkgapi.EvaluationJobResource
+		if err := json.Unmarshal(tc.body, &job); err != nil {
+			return nil, err
+		}
+		return &job, nil
+	}
+	if err := waitForOCIExportStatus(fetchJob, pkgapi.OCIProcessingState(expectedStatus), tc.waitDeadline, tc.waitInterval); err != nil {
+		return tc.logError(err)
+	}
+	return nil
+}
+
+// waitForOCIExportStatus polls a job's OCI workflow independently of evaluation
+// completion. Missing OCI status is expected until the export worker starts.
+// fetchJob must bound its own request duration; fetch errors are retried.
+func waitForOCIExportStatus(fetchJob func() (*pkgapi.EvaluationJobResource, error), expected pkgapi.OCIProcessingState, timeout, interval time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	var lastStatus pkgapi.OCIProcessingState
+	var lastErr error
+	for time.Now().Before(deadline) {
+		job, err := fetchJob()
+		lastErr = err
+		if err == nil && job != nil && job.Results != nil && job.Results.OCI != nil && job.Results.OCI.Status != nil {
+			status := job.Results.OCI.Status
+			lastStatus = status.State
+			if status.State == expected {
+				return nil
+			}
+			if pkgapi.IsOCIProcessingTerminalState(status.State) {
+				message := ""
+				if status.Message != nil {
+					message = status.Message.Message
+				}
+				return fmt.Errorf("OCI export reached terminal state %q (expected %q): %s", status.State, expected, message)
+			}
+		}
+		time.Sleep(interval)
+	}
+	return fmt.Errorf("timed out after %v waiting for OCI export status %q, last status: %q, last error: %v", timeout, expected, lastStatus, lastErr)
+}
+
 // ociBaseURL returns the base URL for OCI registry access (for test code to fetch artifacts)
 // Returns empty string if OCI_REGISTRY is not set (scenarios will be skipped by requireOCIConfiguration)
 func ociBaseURL() string {
@@ -118,8 +171,20 @@ func (tc *scenarioConfig) getOCIHTTPClient() *http.Client {
 	return tc.ociHTTPClient
 }
 
-// iFetchOCIManifestByRepoAndTag fetches OCI manifest and then the blob
+// iFetchOCIManifestByRepoAndTag retains the archive-based adapter artifact path.
 func (tc *scenarioConfig) iFetchOCIManifestByRepoAndTag(repository, tag string) error {
+	return tc.fetchOCIManifestByRepoAndTag(repository, tag, false)
+}
+
+// iFetchOCIEvaluationCardManifestByRepoAndTag fetches a service-generated JSON card.
+func (tc *scenarioConfig) iFetchOCIEvaluationCardManifestByRepoAndTag(repository, tag string) error {
+	return tc.fetchOCIManifestByRepoAndTag(repository, tag, true)
+}
+
+func (tc *scenarioConfig) fetchOCIManifestByRepoAndTag(repository, tag string, evaluationCard bool) error {
+	tc.ociArtifactBody = nil
+	tc.ociArtifactError = nil
+
 	repositoryResolved, err := tc.getValue(repository)
 	if err != nil {
 		return tc.logError(fmt.Errorf("failed to resolve repository value %q: %w", repository, err))
@@ -143,7 +208,7 @@ func (tc *scenarioConfig) iFetchOCIManifestByRepoAndTag(repository, tag string) 
 		return tc.logError(fmt.Errorf("failed to create manifest request: %w", err))
 	}
 
-	req.Header.Set("Accept", "application/vnd.oci.image.manifest.v1+json")
+	req.Header.Set("Accept", ociclient.MediaTypeImageManifest)
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
@@ -208,30 +273,45 @@ func (tc *scenarioConfig) iFetchOCIManifestByRepoAndTag(repository, tag string) 
 		}
 	}
 
-	// Extract digest from $.layers[0].digest
-	// NOTE: eval-hub OCI exports always place the results tar+gzip in the first layer.
-	// The blob extraction logic (iFetchOCIBlobByDigest) then searches all files within
-	// the tar for evaluation-card.json or falls back to the first .json file found.
+	if evaluationCard {
+		// Service-generated cards are raw JSON, independent of adapter archives.
+		for _, layer := range layersArray {
+			layerMap, ok := layer.(map[string]interface{})
+			if !ok || layerMap["mediaType"] != ociclient.MediaTypeEvaluationCardLayer {
+				continue
+			}
+			digest, ok := layerMap["digest"].(string)
+			if !ok || digest == "" {
+				tc.ociManifestError = fmt.Errorf("evaluation card layer digest is empty or invalid")
+				return tc.logError(tc.ociManifestError)
+			}
+			return tc.fetchOCIBlobByDigest(repositoryResolved, digest, true)
+		}
+		tc.ociManifestError = fmt.Errorf("manifest has no evaluation card layer with media type %q", ociclient.MediaTypeEvaluationCardLayer)
+		return tc.logError(tc.ociManifestError)
+	}
+
+	// Preserve the existing first-layer archive selection for adapter artifacts.
 	digest, err := jsonpath.Get("$.layers[0].digest", manifestData)
 	if err != nil {
 		tc.ociManifestError = err
 		return tc.logError(fmt.Errorf("failed to extract digest from manifest: %w", err))
 	}
-
 	digestStr, ok := digest.(string)
 	if !ok {
 		tc.ociManifestError = fmt.Errorf("digest is not a string: %T", digest)
 		return tc.logError(tc.ociManifestError)
 	}
-
 	tc.logDebug("Extracted blob digest: %s\n", digestStr)
-
-	// Now fetch the blob
 	return tc.iFetchOCIBlobByDigest(repositoryResolved, digestStr)
 }
 
-// iFetchOCIBlobByDigest fetches the OCI blob content by digest
+// iFetchOCIBlobByDigest fetches and extracts an archive-based OCI artifact.
 func (tc *scenarioConfig) iFetchOCIBlobByDigest(repository, digest string) error {
+	return tc.fetchOCIBlobByDigest(repository, digest, false)
+}
+
+func (tc *scenarioConfig) fetchOCIBlobByDigest(repository, digest string, evaluationCard bool) error {
 	token, err := tc.getOCIBearerToken(repository)
 	if err != nil {
 		return tc.logError(fmt.Errorf("failed to obtain OCI Bearer token for blob fetch: %w", err))
@@ -271,6 +351,14 @@ func (tc *scenarioConfig) iFetchOCIBlobByDigest(repository, digest string) error
 	}
 
 	tc.logDebug("OCI blob fetched successfully (%d bytes)\n", len(body))
+
+	if evaluationCard {
+		// The evaluation-card media type describes the JSON document itself.
+		// Leave JSON validation to the artifact assertion step.
+		tc.ociArtifactBody = body
+		tc.ociArtifactError = nil
+		return nil
+	}
 
 	// The blob might be gzipped and/or tarred - need to decompress and extract
 	var finalContent []byte

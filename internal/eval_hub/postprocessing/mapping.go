@@ -4,6 +4,7 @@ package postprocessing
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"strings"
 
@@ -15,7 +16,6 @@ const (
 	ProviderID          = "evalhub-internal"
 	BenchmarkID         = "evaluation-post-processor"
 	workloadType        = workloads.PostProcessing
-	defaultAdapterImage = "quay.io/evalhub/evalhub-post-processor:latest"
 	adapterImageEnv     = "EVALHUB_POST_PROCESSING_IMAGE"
 	localAdapterDir     = "../eval-hub-contrib/adapters/evalhub-post-processor"
 	defaultLocalCommand = localAdapterDir + "/.venv/bin/python " + localAdapterDir + "/main.py"
@@ -34,15 +34,12 @@ func init() {
 }
 
 // RuntimeProvider builds the in-memory execution descriptor used by runtimes
-// for post-processing. The image comes from the environment or the built-in
-// latest image; Kubernetes job creation supplies default resource values. The
+// for post-processing. Kubernetes requires an image supplied through
+// EVALHUB_POST_PROCESSING_IMAGE and supplies default resource values. The
 // local command runs the adapter from a sibling eval-hub-contrib checkout unless
 // overridden for a different local layout.
 func RuntimeProvider() *api.ProviderResource {
 	image := strings.TrimSpace(os.Getenv(adapterImageEnv))
-	if image == "" {
-		image = defaultAdapterImage
-	}
 	pullPolicy := ""
 	if strings.HasSuffix(image, ":latest") {
 		pullPolicy = "always"
@@ -89,8 +86,25 @@ func ToEvaluationJob(request *api.StandalonePostProcessingRequest) *api.Evaluati
 		// does not imply an order when none was requested.
 		parameters["operation_order"] = request.OperationOrder
 	}
+	var exports *api.EvaluationExports
+	if ci := request.Operations.ConfidenceInterval; ci != nil && ci.ResultsDataRef != nil && ci.ResultsDataRef.OCI != nil {
+		// Reuse exports.oci only to configure the sidecar's input registry and
+		// credential projection: the existing proxy reads its target from there.
+		// The handler excludes internal post-processing jobs from evaluation-card
+		// export, so this input configuration never enables output persistence.
+		source := ci.ResultsDataRef.OCI
+		coordinates := source.Coordinates
+		coordinates.Annotations = maps.Clone(source.Coordinates.Annotations)
+		oci := &api.EvaluationExportsOCI{Coordinates: coordinates}
+		if source.K8s != nil {
+			connection := *source.K8s
+			oci.K8s = &connection
+		}
+		exports = &api.EvaluationExports{OCI: oci}
+	}
 	return &api.EvaluationJobConfig{
 		Name:           name,
+		Exports:        exports,
 		Model:          &api.ModelRef{Name: BenchmarkID},
 		HardwareConfig: request.HardwareConfig,
 		Benchmarks: []api.EvaluationBenchmarkConfig{{

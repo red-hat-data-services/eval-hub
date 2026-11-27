@@ -12,7 +12,7 @@ KIND_CLUSTER_NAME="${KIND_CLUSTER_NAME:-evalhub-dev}"
 IMAGE_TAG="${IMAGE_TAG:-kind-${KIND_CLUSTER_NAME}}"
 SKIP_BUILD="${SKIP_BUILD:-false}"
 AIRGAP="${AIRGAP:-false}"
-ADAPTERS="${ADAPTERS:-inspect,lm-evaluation-harness,followbench}"
+ADAPTERS="${ADAPTERS:-followbench}"
 CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-}"
 EVALHUB_HOST_PORT="${EVALHUB_HOST_PORT:-18443}"
 EVALHUB_NODE_PORT="${EVALHUB_NODE_PORT:-30443}"
@@ -26,6 +26,9 @@ SELECTED_ADAPTER_IMAGES=()
 CALICO_VERSION="v3.33.0"
 KUBECONFIG_DIR="${XDG_CONFIG_HOME:-${HOME}/.config}/evalhub/kubeconfigs"
 KUBECONFIG_FILE="${KUBECONFIG_DIR}/${KIND_CLUSTER_NAME}.yaml"
+# The engine that backs KIND_CLUSTER_NAME is recorded next to the private
+# kubeconfig, so later commands reuse it instead of probing both engines.
+RUNTIME_STATE_FILE="${KUBECONFIG_DIR}/${KIND_CLUSTER_NAME}.runtime"
 WORK_DIR=""
 REGISTRY_NAME=""
 REGISTRY_ALIAS=""
@@ -35,6 +38,9 @@ TEMP_REGISTRY_TAGS=()
 PORT_FORWARD_PID=""
 KIND_CLUSTER_CREATED=false
 API_HOST_ACCESS_PORT="${EVALHUB_HOST_PORT}"
+
+# Runtime selection helpers, shared with the other dev scripts.
+. "${SCRIPT_DIR}/lib/dev-runtime.sh"
 
 log() {
   printf '[%s] [%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S%z')" "$1" "$2"
@@ -60,17 +66,33 @@ Inputs (also accepted as environment variables):
   SKIP_BUILD=true         reuse locally built images with IMAGE_TAG for EvalHub,
                           the operator, and selected adapters
   ADAPTERS=all             build all six curated adapter images
-  ADAPTERS=<list>          comma-separated selection (default: inspect,lm-evaluation-harness,followbench):
+  ADAPTERS=<list>          comma-separated selection (default: followbench):
                           inspect, lm-evaluation-harness, lighteval, ruler, ifbench, followbench
   AIRGAP=true              create/use a Calico kind cluster and deny external
                           egress from system-namespace evaluation jobs (default: false)
   CONTAINER_RUNTIME        container engine for image builds, the local registry,
-                           and the kind nodes (podman or docker; default: the
-                           engine that already owns KIND_CLUSTER_NAME, otherwise
-                           podman when reachable, or docker under WSL). A forced
-                           engine must own an existing KIND_CLUSTER_NAME;
-                           otherwise the script fails instead of creating a
-                           duplicate cluster and replacing its kubeconfig.
+                           and the kind nodes (podman or docker). Default: the
+                           engine recorded for KIND_CLUSTER_NAME in
+                           evalhub/kubeconfigs/<cluster>.runtime, otherwise the
+                           engine that already owns the cluster, otherwise the
+                           first reachable engine (podman before docker, docker
+                           before podman under WSL). A record whose engine is not
+                           installed is ignored, so an uninstalled engine does not
+                           block the next deploy. An explicit value must match the
+                           recorded engine, or own the cluster when no record
+                           exists yet; otherwise the script fails instead of
+                           creating a duplicate cluster and replacing its
+                           kubeconfig. A record whose engine no longer runs
+                           KIND_CLUSTER_NAME also fails, an explicit value
+                           included, when the other engine owns that cluster, so a
+                           stale record neither hides it nor gets its kubeconfig
+                           replaced; one whose engine is installed but stopped
+                           fails too, as unverified rather than stale, and keeps
+                           the record, because a stopped engine may still own its
+                           cluster. Start that engine and retry to reuse the
+                           recorded cluster, or delete that cluster first and only
+                           then remove the record (rm -- <cluster>.runtime) to keep
+                           the other engine's cluster.
   Repeated builds use the container runtime's layer cache; the EvalHub build date is stable
   for a source commit so a no-change deploy does not rebuild Go binaries.
   Temporary localhost:<port> registry tags are removed after each successful push.
@@ -178,102 +200,81 @@ need_command() {
   command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
 }
 
-# Return 0 when KIND_CLUSTER_NAME already exists under the given container
-# runtime, using the kind provider that runtime requires. A runtime that is not
-# installed or not reachable cannot own a cluster, so it reports false.
-kind_cluster_in_runtime() {
-  local runtime="$1" clusters
-  command -v "$runtime" >/dev/null 2>&1 || return 1
-  "$runtime" info >/dev/null 2>&1 || return 1
-  case "$runtime" in
-    podman)
-      clusters="$(KIND_EXPERIMENTAL_PROVIDER=podman kind get clusters 2>/dev/null || true)"
-      ;;
-    docker)
-      clusters="$(env -u KIND_EXPERIMENTAL_PROVIDER kind get clusters 2>/dev/null || true)"
-      ;;
-    *)
-      return 1
-      ;;
-  esac
-  grep -Fqx -- "$KIND_CLUSTER_NAME" <<<"$clusters"
-}
-
-# Fail when a forced CONTAINER_RUNTIME does not own KIND_CLUSTER_NAME while the
-# other container engine does. kind only lists the clusters of the engine it is
-# pointed at, so continuing would create a second cluster with the same name
-# under the selected engine and overwrite the private kubeconfig of the cluster
-# that is already running. Auto-detection already selects the owning engine, so
-# this guard only applies when CONTAINER_RUNTIME is set explicitly.
-ensure_forced_runtime_matches_owner() {
-  local other
-  case "$CONTAINER_RUNTIME" in
-    podman) other=docker ;;
-    docker) other=podman ;;
-    *) return 0 ;;
-  esac
-  kind_cluster_in_runtime "$other" || return 0
-  fail "Kind cluster '$KIND_CLUSTER_NAME' exists under $other, not $CONTAINER_RUNTIME. Unset CONTAINER_RUNTIME to reuse the engine that owns the cluster, or set CONTAINER_RUNTIME=$other."
-}
-
-# Select the container runtime used for image builds, the local registry, and
-# the kind nodes. Set CONTAINER_RUNTIME to force a specific runtime. Otherwise an
-# existing KIND_CLUSTER_NAME decides the runtime: kind only lists the clusters
-# owned by the runtime it is pointed at, so reusing the runtime that already owns
-# the cluster prevents creating a second cluster with the same name (and private
-# kubeconfig path) under the other engine. With no existing cluster, Podman is
-# preferred whenever it is installed and reachable, except under WSL where Docker
-# is preferred instead: WSL2 podman answers 'podman info' but kind node startup
-# fails during systemd/cgroup setup. The non-preferred runtime is the fallback
-# when the preferred one is not reachable. A forced runtime must own an existing
-# KIND_CLUSTER_NAME (see ensure_forced_runtime_matches_owner).
+# Container runtime policy for a deploy. resolve_runtime_decision (in
+# scripts/lib/dev-runtime.sh) works out which engine runs KIND_CLUSTER_NAME and
+# why; this table decides what a deploy does about it. A deploy must never create
+# a second cluster of the same name or replace the kubeconfig of one that is
+# running, so every decision where the other engine owns the cluster fails with
+# the engine to use, and an explicit value that contradicts a trusted record
+# fails instead of proceeding. dev-deploy records the outcome, so the owner and
+# fallback rows only run on a first deploy.
+#
+# A record whose engine no longer lists the cluster is stale and says so; a
+# record whose engine is stopped is only unverified, because a stopped engine
+# (a podman machine with its VM shut down) can still own its kind cluster and
+# another cluster of the same name can exist under the other engine. The two
+# fail differently on purpose: the stale record's remedy is to remove it, while
+# the unverified one is kept until the user has confirmed which cluster to keep.
 detect_container_runtime() {
   local runtime
-  local -a preferred_runtimes=()
-  if uname -r | grep -qiE 'microsoft|wsl'; then
-    preferred_runtimes=(docker podman)
-  else
-    preferred_runtimes=(podman docker)
+  resolve_runtime_decision fallback
+  if [[ "$RESOLVED_RECORD_STATE" == uninstalled ]]; then
+    log WARN "Kind cluster '$KIND_CLUSTER_NAME' is recorded as $RESOLVED_RECORDED-backed in $RUNTIME_STATE_FILE, but $RESOLVED_RECORDED is not installed; ignoring the stale record and selecting another engine."
   fi
-  case "$CONTAINER_RUNTIME" in
-    podman|docker)
-      need_command "$CONTAINER_RUNTIME"
-      "$CONTAINER_RUNTIME" info >/dev/null 2>&1 ||
-        fail "$CONTAINER_RUNTIME is installed but not reachable. Start the $CONTAINER_RUNTIME daemon (or podman machine) and retry."
-      ensure_forced_runtime_matches_owner
-      ;;
-    "")
-      for runtime in "${preferred_runtimes[@]}"; do
-        if kind_cluster_in_runtime "$runtime"; then
-          CONTAINER_RUNTIME="$runtime"
-          log INFO "Kind cluster '$KIND_CLUSTER_NAME' already exists under $runtime; using $runtime to reuse that cluster."
-          break
-        fi
-      done
-      if [[ -z "$CONTAINER_RUNTIME" ]]; then
-        for runtime in "${preferred_runtimes[@]}"; do
-          if command -v "$runtime" >/dev/null 2>&1 && "$runtime" info >/dev/null 2>&1; then
-            CONTAINER_RUNTIME="$runtime"
-            break
-          fi
-        done
-      fi
-      [[ -n "$CONTAINER_RUNTIME" ]] ||
-        fail "Neither podman nor docker is reachable. Install podman (preferred; docker under WSL) and make sure it is running."
-      ;;
-    *)
+  case "$RESOLVED_EVIDENCE" in
+    explicit-invalid)
       fail "CONTAINER_RUNTIME must be 'podman' or 'docker'."
       ;;
+    explicit-missing)
+      # use_runtime reports which engine is missing or stopped.
+      use_runtime "$RESOLVED_RUNTIME" "for builds, the local registry, and kind"
+      ;;
+    explicit-mismatch|explicit-mismatch-stale|explicit-mismatch-gone)
+      fail "Kind cluster '$KIND_CLUSTER_NAME' was deployed with $RESOLVED_RECORDED (see $RUNTIME_STATE_FILE). Unset CONTAINER_RUNTIME to reuse $RESOLVED_RECORDED, or delete that cluster and its state file before switching to $RESOLVED_RUNTIME."
+      ;;
+    explicit-recorded-stale|recorded-stale)
+      # Both terms are only reported after the other engine listed the cluster,
+      # so RESOLVED_OWNER names it: the record is stale, and removing it is the
+      # remedy.
+      fail "Kind cluster '$KIND_CLUSTER_NAME' is recorded as $RESOLVED_RECORDED-backed in $RUNTIME_STATE_FILE, but $RESOLVED_RECORDED no longer runs it and $RESOLVED_OWNER does. Remove the stale record (rm -- '$RUNTIME_STATE_FILE') to reuse the $RESOLVED_OWNER cluster with this script, or remove it and run 'make dev-clean CONTAINER_RUNTIME=$RESOLVED_OWNER DELETE_CLUSTER=true' to delete that cluster."
+      ;;
+    recorded-stopped|explicit-recorded-unverified)
+      # The recorded engine is installed but not reachable, so the record cannot
+      # be verified either way. An engine that lists the name proves only that a
+      # cluster of that name exists under it, not that the recorded engine's
+      # cluster was deleted: stopping a podman machine stops its VM, while kind
+      # keeps cluster state in node containers, so the recorded cluster is
+      # usually still there. Removing the record here would let a later deploy
+      # record $RESOLVED_OWNER and leave that cluster untracked, so the record is
+      # kept and the choice is left to the user.
+      if [[ -n "$RESOLVED_OWNER" ]]; then
+        fail "Kind cluster '$KIND_CLUSTER_NAME' is recorded as $RESOLVED_RECORDED-backed in $RUNTIME_STATE_FILE, but $RESOLVED_RECORDED is not reachable, so the record cannot be verified; $RESOLVED_OWNER also lists a cluster of that name, which may or may not be the recorded one. Start $RESOLVED_RECORDED and retry to reuse the recorded cluster, or, to keep the $RESOLVED_OWNER cluster instead, delete the $RESOLVED_RECORDED one first (start $RESOLVED_RECORDED and run 'make dev-clean CONTAINER_RUNTIME=$RESOLVED_RECORDED DELETE_CLUSTER=true'), and only then remove the record if it is still there (rm -f -- '$RUNTIME_STATE_FILE'). The record is left in place so a stopped $RESOLVED_RECORDED cluster cannot be left untracked."
+      fi
+      fail "Kind cluster '$KIND_CLUSTER_NAME' is recorded as $RESOLVED_RECORDED-backed in $RUNTIME_STATE_FILE, but $RESOLVED_RECORDED is not reachable, so the record cannot be verified. Start $RESOLVED_RECORDED and retry; remove the record (rm -- '$RUNTIME_STATE_FILE') only once you have confirmed that cluster is gone."
+      ;;
+    explicit-other-owns)
+      fail "Kind cluster '$KIND_CLUSTER_NAME' exists under $RESOLVED_OWNER, not $RESOLVED_RUNTIME. Unset CONTAINER_RUNTIME to reuse the engine that owns the cluster, or set CONTAINER_RUNTIME=$RESOLVED_OWNER."
+      ;;
+    recorded-owned|recorded-gone)
+      log INFO "Kind cluster '$KIND_CLUSTER_NAME' was deployed with $RESOLVED_RUNTIME (see $RUNTIME_STATE_FILE)."
+      use_runtime "$RESOLVED_RUNTIME" "for builds, the local registry, and kind"
+      ;;
+    owner)
+      log INFO "Kind cluster '$KIND_CLUSTER_NAME' already exists under $RESOLVED_RUNTIME; using $RESOLVED_RUNTIME to reuse that cluster."
+      use_runtime "$RESOLVED_RUNTIME" "for builds, the local registry, and kind"
+      ;;
+    no-owner)
+      runtime="$(first_reachable_runtime)" ||
+        fail "Neither podman nor docker is reachable. Install podman (or docker) and make sure it is running."
+      use_runtime "$runtime" "for builds, the local registry, and kind"
+      ;;
+    explicit-owned|explicit-no-owner)
+      use_runtime "$RESOLVED_RUNTIME" "for builds, the local registry, and kind"
+      ;;
+    *)
+      fail "Unhandled runtime decision: $RESOLVED_EVIDENCE"
+      ;;
   esac
-  log INFO "Using $CONTAINER_RUNTIME as the container runtime for builds, the local registry, and kind."
-}
-
-kind_cmd() {
-  if [[ "${CONTAINER_RUNTIME:-}" == podman ]]; then
-    KIND_EXPERIMENTAL_PROVIDER=podman kind "$@"
-  else
-    env -u KIND_EXPERIMENTAL_PROVIDER kind "$@"
-  fi
 }
 
 trim_whitespace() {
@@ -500,6 +501,7 @@ YAML
     KIND_CLUSTER_CREATED=true
   fi
   chmod 600 "$KUBECONFIG_FILE"
+  record_runtime
   if [[ "$AIRGAP" == true ]]; then
     ensure_calico_cni
   fi
@@ -795,6 +797,53 @@ set_inspect_provider_memory_for_kind() {
   mv -- "$output" "$file"
 }
 
+# The lighteval adapter's packaged 4Gi request has the same single-node kind
+# problem: next to the system pods it allows only one lighteval job pod at a
+# time, so queued smoke jobs sit Pending until their fixture deadline expires
+# while inspect jobs (already lowered to 2Gi) hold the memory. Lower the
+# request and limit in the rendered provider ConfigMap so lighteval smoke jobs
+# schedule alongside inspect jobs; the packaged catalog keeps its production
+# values.
+set_lighteval_provider_memory_for_kind() {
+  local file="$1" output="$WORK_DIR/provider-lighteval.yaml.tmp"
+  local requests limits
+  requests="$(grep -Ec '^[[:space:]]*memory_request: 4Gi[[:space:]]*$' "$file" || true)"
+  limits="$(grep -Ec '^[[:space:]]*memory_limit: 8Gi[[:space:]]*$' "$file" || true)"
+  [[ "$requests" == 1 && "$limits" == 1 ]] ||
+    fail "Expected one lighteval memory_request of 4Gi and one memory_limit of 8Gi in $file."
+  sed -E \
+    -e 's/^([[:space:]]*)memory_request: 4Gi[[:space:]]*$/\1memory_request: 2Gi/' \
+    -e 's/^([[:space:]]*)memory_limit: 8Gi[[:space:]]*$/\1memory_limit: 4Gi/' \
+    "$file" >"$output"
+  mv -- "$output" "$file"
+}
+
+# garak is not a curated adapter, so it keeps the operator-packaged
+# quay.io/trustyai/trustyai-garak-lls-provider-dsp image, which is public but
+# roughly 950MB. Its packaged 4Gi request has the same single-node kind problem
+# as inspect and lighteval: next to the system pods and the already lowered 2Gi
+# job pods, no garak job pod can schedule, so all of its smoke benchmarks stay
+# Pending until their fixture deadline expires. Lower the request and limit in
+# the rendered provider ConfigMap so garak jobs are admitted; the packaged
+# catalog keeps its production values.
+set_garak_provider_memory_for_kind() {
+  local file="$1" output="$WORK_DIR/provider-garak.yaml.tmp"
+  local requests limits
+  if [[ ! -f "$file" ]]; then
+    log INFO "No rendered garak provider ConfigMap at $file; leaving garak resources unchanged."
+    return 0
+  fi
+  requests="$(grep -Ec '^[[:space:]]*memory_request: 4Gi[[:space:]]*$' "$file" || true)"
+  limits="$(grep -Ec '^[[:space:]]*memory_limit: 8Gi[[:space:]]*$' "$file" || true)"
+  [[ "$requests" == 1 && "$limits" == 1 ]] ||
+    fail "Expected one garak memory_request of 4Gi and one memory_limit of 8Gi in $file."
+  sed -E \
+    -e 's/^([[:space:]]*)memory_request: 4Gi[[:space:]]*$/\1memory_request: 2Gi/' \
+    -e 's/^([[:space:]]*)memory_limit: 8Gi[[:space:]]*$/\1memory_limit: 4Gi/' \
+    "$file" >"$output"
+  mv -- "$output" "$file"
+}
+
 make_certificate() {
   local directory="$1" name="$2" common_name="$3" sans="$4" config
   config="$directory/$name.cnf"
@@ -935,7 +984,13 @@ render_operator_overlay() {
     if [[ "$adapter" == inspect ]]; then
       set_inspect_provider_memory_for_kind "$config_root/configmaps/evalhub/$provider_config"
     fi
+    if [[ "$adapter" == lighteval ]]; then
+      set_lighteval_provider_memory_for_kind "$config_root/configmaps/evalhub/$provider_config"
+    fi
   done
+  # garak and garak-kfp are not curated adapters, so they never enter the loop
+  # above and keep the operator-packaged provider ConfigMaps.
+  set_garak_provider_memory_for_kind "$config_root/configmaps/evalhub/provider-garak.yaml"
   replace_env_value "$params" kube-rbac-proxy "localhost:${REGISTRY_PORT}/opendatahub/odh-kube-rbac-proxy:odh-stable"
 
   overlay="$config_root/overlays/evalhub-kind"
@@ -1335,170 +1390,18 @@ install_mock_services() {
   local mock_image
   mock_image="$(registry_image kind-openai-mock)"
   log INFO "Deploying mock OpenAI-compatible target and judge endpoints."
+  # The mock source stays a plain, lintable, testable Python file in
+  # scripts/kind-openai-mock.py. Loading it through --from-file avoids the
+  # YAML block-scalar indentation and unquoted-heredoc expansion constraints
+  # on its content. dev-clean selects resources by the ownership annotation,
+  # so it must be part of every applied manifest; inject it before apply.
+  kubectl --kubeconfig "$KUBECONFIG_FILE" -n system create configmap evalhub-kind-openai-mock-code \
+    --from-file=mock.py="${EVALHUB_REPO}/scripts/kind-openai-mock.py" \
+    --dry-run=client -o yaml \
+    | kubectl --kubeconfig "$KUBECONFIG_FILE" annotate --local -f - -n system \
+      --overwrite "io.evalhub.kind-smoke.cluster=${KIND_CLUSTER_NAME}" -o yaml \
+    | kubectl --kubeconfig "$KUBECONFIG_FILE" apply -f -
   kubectl --kubeconfig "$KUBECONFIG_FILE" apply -f - <<YAML
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: evalhub-kind-openai-mock-code
-  namespace: system
-  annotations:
-    io.evalhub.kind-smoke.cluster: $KIND_CLUSTER_NAME
-data:
-  mock.py: |
-    import json
-    import os
-    import re
-    from http.server import BaseHTTPRequestHandler, HTTPServer
-
-    ROLE = os.environ["MOCK_ROLE"]
-    MODEL = os.environ["MOCK_MODEL"]
-    API_KEYS = {item.strip() for item in os.environ["MOCK_API_KEYS"].split(",") if item.strip()}
-
-    class Handler(BaseHTTPRequestHandler):
-        def log_message(self, _format, *_args):
-            pass
-
-        def reply(self, status, value):
-            body = json.dumps(value).encode()
-            self.send_response(status)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def do_GET(self):
-            if self.path.rstrip("/").endswith("/models"):
-                self.reply(200, {"object": "list", "data": [{"id": MODEL, "object": "model"}]})
-            else:
-                self.reply(404, {"error": {"message": "not found"}})
-
-        def do_POST(self):
-            token = self.headers.get("Authorization", "")
-            if token not in {"Bearer " + key for key in API_KEYS}:
-                self.reply(401, {"error": {"message": "mock rejected credential"}})
-                print(json.dumps({"role": ROLE, "auth": "rejected"}), flush=True)
-                return
-
-            raw = self.rfile.read(int(self.headers.get("Content-Length", "0")))
-            request = json.loads(raw or b"{}")
-            endpoint = self.path.split("?", 1)[0]
-            if ROLE == "target" and endpoint.endswith("/v1/completions"):
-                prompts = request.get("prompt", "")
-                if not isinstance(prompts, list):
-                    prompts = [prompts]
-                choices = []
-                prompt_tokens = 0
-                for index, prompt_value in enumerate(prompts):
-                    prompt = prompt_value if isinstance(prompt_value, str) else str(prompt_value)
-                    # local-completions uses echo/logprobs for multiple-choice
-                    # likelihood scoring. Return enough deterministic mock token
-                    # scores for the client tokenizer; test scores are not meaningful.
-                    token_count = max(2, len(prompt.encode("utf-8")) + 1)
-                    prompt_tokens += token_count
-                    choices.append({
-                        "index": index,
-                        "text": prompt + " ",
-                        "logprobs": {
-                            "tokens": ["mock"] * token_count,
-                            "token_logprobs": [-0.1] * token_count,
-                            "top_logprobs": [{"mock": -0.1}] * token_count,
-                            "text_offset": list(range(token_count)),
-                        },
-                        "finish_reason": "stop",
-                    })
-                self.reply(200, {
-                    "id": "cmpl-kind-mock",
-                    "object": "text_completion",
-                    "created": 0,
-                    "model": request.get("model", MODEL),
-                    "choices": choices,
-                    "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": 1, "total_tokens": prompt_tokens + 1},
-                })
-                print(json.dumps({"role": ROLE, "endpoint": "completions", "auth": "accepted"}), flush=True)
-                return
-
-            # Inspect AI's OpenAI-compatible provider calls the Responses API by
-            # default, so emulate the subset of it that a chat completion needs.
-            # Without this, inspect fails with
-            # TypeError("'NoneType' object is not iterable") on response.output.
-            if ROLE == "target" and endpoint.endswith("/responses/input_tokens"):
-                self.reply(200, {"object": "response.input_tokens", "input_tokens": 1})
-                print(json.dumps({"role": ROLE, "endpoint": "responses.input_tokens", "auth": "accepted"}), flush=True)
-                return
-
-            if ROLE == "target" and endpoint.endswith("/v1/responses"):
-                text = "I will follow the requested constraints."
-                self.reply(200, {
-                    "id": "resp-kind-mock",
-                    "object": "response",
-                    "created_at": 0,
-                    "status": "completed",
-                    "model": request.get("model", MODEL),
-                    "output": [{
-                        "type": "message",
-                        "id": "msg-kind-mock",
-                        "status": "completed",
-                        "role": "assistant",
-                        "content": [{"type": "output_text", "text": text, "annotations": []}],
-                    }],
-                    "parallel_tool_calls": False,
-                    "tool_choice": "auto",
-                    "tools": [],
-                    "error": None,
-                    "incomplete_details": None,
-                    "instructions": None,
-                    "metadata": {},
-                    "temperature": 1.0,
-                    "top_p": 1.0,
-                    "max_output_tokens": None,
-                    "previous_response_id": None,
-                    "reasoning": None,
-                    "text": {"format": {"type": "text"}},
-                    "truncation": "disabled",
-                    "usage": {
-                        "input_tokens": 1,
-                        "input_tokens_details": {"cached_tokens": 0, "cache_write_tokens": 0},
-                        "output_tokens": 1,
-                        "output_tokens_details": {"reasoning_tokens": 0},
-                        "total_tokens": 2,
-                    },
-                    "user": None,
-                })
-                print(json.dumps({"role": ROLE, "endpoint": "responses", "auth": "accepted"}), flush=True)
-                return
-
-            if ROLE == "judge":
-                # Search the complete serialized request because OpenAI-compatible
-                # clients may represent prompt content as strings or structured parts.
-                request_text = json.dumps(request, ensure_ascii=False)
-                grade_prompt = re.search(
-                    r"answer\s+with\s+grade\s*:", request_text, re.IGNORECASE
-                ) is not None
-                if grade_prompt:
-                    # CyberSecEval 2's model_graded_qa scorer requires this
-                    # grade format; an unparseable reply yields NaN and
-                    # prevents the SDK from reporting the terminal status.
-                    content = "GRADE: C"
-                    response_format = "grade"
-                else:
-                    match = re.search(r"with\s+(\d+)\s+values", request_text, re.IGNORECASE)
-                    count = int(match.group(1)) if match else 1
-                    content = "[" + ", ".join('"YES"' for _ in range(count)) + "]"
-                    response_format = "yes-array"
-            else:
-                content = "I will follow the requested constraints."
-            self.reply(200, {
-                "id": "chatcmpl-kind-mock",
-                "object": "chat.completion",
-                "created": 0,
-                "model": request.get("model", MODEL),
-                "choices": [{"index": 0, "message": {"role": "assistant", "content": content}, "finish_reason": "stop"}],
-                "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-            })
-            print(json.dumps({"role": ROLE, "auth": "accepted", "response_format": response_format if ROLE == "judge" else "target"}), flush=True)
-
-    HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
----
 apiVersion: apps/v1
 kind: Deployment
 metadata:

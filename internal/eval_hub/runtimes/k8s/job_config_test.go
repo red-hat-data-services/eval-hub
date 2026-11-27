@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eval-hub/eval-hub/internal/eval_hub/config"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/postprocessing"
@@ -11,6 +12,44 @@ import (
 	"github.com/eval-hub/eval-hub/pkg/api"
 	corev1 "k8s.io/api/core/v1"
 )
+
+func testSidecarConfig() *config.SidecarConfig {
+	return &config.SidecarConfig{SidecarContainer: &config.SidecarContainerConfig{Image: "registry.example.com/evalhub/runtime:test"}}
+}
+
+func testJobServiceConfig() *config.Config {
+	return &config.Config{Sidecar: testSidecarConfig()}
+}
+
+func testPostProcessingProvider(t *testing.T) *api.ProviderResource {
+	t.Helper()
+	t.Setenv("EVALHUB_POST_PROCESSING_IMAGE", "registry.example.com/evalhub/post-processor:test")
+	return postprocessing.RuntimeProvider()
+}
+
+func TestSidecarImageMustBeConfigured(t *testing.T) {
+	for name, cfg := range map[string]*config.Config{
+		"nil config":   nil,
+		"no sidecar":   {},
+		"no container": {Sidecar: &config.SidecarConfig{}},
+		"blank image":  {Sidecar: &config.SidecarConfig{SidecarContainer: &config.SidecarContainerConfig{Image: "  "}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			image, _, err := sidecarImageAndResources(cfg)
+			if image != "" || err == nil || !strings.Contains(err.Error(), "sidecar.sidecar_container.image") {
+				t.Fatalf("got image %q, error %v; want missing configuration error", image, err)
+			}
+		})
+	}
+
+	cfg := testJobServiceConfig()
+	want := cfg.Sidecar.SidecarContainer.Image
+	cfg.Sidecar.SidecarContainer.Image = " " + want + " "
+	got, resources, err := sidecarImageAndResources(cfg)
+	if err != nil || got != want || !reflect.DeepEqual(resources, defaultSidecarResourceRequirements()) {
+		t.Fatalf("got image %q, resources %v, error %v; want %q and default resources", got, resources, err, want)
+	}
+}
 
 func TestPostProcessorPVCConfigsEdgeCases(t *testing.T) {
 	validColumns := api.CalibrationDataConfig{
@@ -40,15 +79,16 @@ func TestPostProcessorPVCConfigsEdgeCases(t *testing.T) {
 			}}),
 		},
 		{
-			name: "PVC claims are trimmed and deduplicated",
+			name: "PVC claims share volumes but preserve reference mounts",
 			job: postProcessorPVCJobForEdgeCases([]api.CalibrationDataRef{
 				{PVC: &api.PVCTestDataRef{ClaimName: " calibration-a "}, DataConfig: validColumns},
 				{PVC: &api.PVCTestDataRef{ClaimName: "calibration-a"}, DataConfig: validColumns},
 				{PVC: &api.PVCTestDataRef{ClaimName: "calibration-b"}, DataConfig: validColumns},
 			}),
 			want: []postProcessorPVCConfig{
-				{claimName: "calibration-a", volumeName: postProcessorCalibrationPVCVolumeNamePrefix + "0", mountPath: postProcessorCalibrationPVCMountPathPrefix + "/calibration-a"},
-				{claimName: "calibration-b", volumeName: postProcessorCalibrationPVCVolumeNamePrefix + "1", mountPath: postProcessorCalibrationPVCMountPathPrefix + "/calibration-b"},
+				{sourceName: "calibration-0", claimName: "calibration-a", volumeName: postProcessorCalibrationPVCVolumeNamePrefix + "0", mountPath: shared.PostProcessorPVCRoot + "/calibration-0"},
+				{sourceName: "calibration-1", claimName: "calibration-a", volumeName: postProcessorCalibrationPVCVolumeNamePrefix + "0", mountPath: shared.PostProcessorPVCRoot + "/calibration-1"},
+				{sourceName: "calibration-2", claimName: "calibration-b", volumeName: postProcessorCalibrationPVCVolumeNamePrefix + "1", mountPath: shared.PostProcessorPVCRoot + "/calibration-2"},
 			},
 		},
 		{
@@ -83,11 +123,19 @@ func postProcessorPVCJobForEdgeCases(refs []api.CalibrationDataRef) *api.Evaluat
 				CalibrationDataRef: refs,
 				SignificanceLevel:  0.05,
 			},
-			ResultsDataRef: &api.PostProcessingResultsDataRef{PVC: &api.PVCTestDataRef{ClaimName: "results"}},
-			PrimaryScore:   &api.PrimaryScore{Metric: "accuracy"},
+			ResultsDataRef: &api.PostProcessingResultsDataRef{EvalJob: &api.EvaluationJobDataRef{ID: "source"}},
 		}},
 	}
 	return &api.EvaluationJobResource{EvaluationJobConfig: *postprocessing.ToEvaluationJob(request)}
+}
+
+func TestPostProcessingJobRequiresConfiguredAdapterImage(t *testing.T) {
+	t.Setenv("EVALHUB_POST_PROCESSING_IMAGE", "")
+	job := postProcessorPVCJobForEdgeCases(nil)
+	cfg, err := buildJobConfig(job, postprocessing.RuntimeProvider(), &job.Benchmarks[0], 0, testJobServiceConfig(), nil)
+	if cfg != nil || err == nil || !strings.Contains(err.Error(), "EVALHUB_POST_PROCESSING_IMAGE") {
+		t.Fatalf("got config %v, error %v; want missing post-processing image error", cfg, err)
+	}
 }
 
 func TestBuildJobConfigRejectsInvalidPostProcessorPVCs(t *testing.T) {
@@ -110,7 +158,7 @@ func TestBuildJobConfigRejectsInvalidPostProcessorPVCs(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			cfg, err := buildJobConfig(test.job, postprocessing.RuntimeProvider(), &test.job.Benchmarks[0], 0, nil, nil)
+			cfg, err := buildJobConfig(test.job, testPostProcessingProvider(t), &test.job.Benchmarks[0], 0, testJobServiceConfig(), nil)
 			if err == nil || !strings.Contains(err.Error(), test.wantErr) {
 				t.Fatalf("buildJobConfig() error = %v, want it to contain %q", err, test.wantErr)
 			}
@@ -157,7 +205,7 @@ func TestBuildJobConfigDefaults(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -248,7 +296,7 @@ func TestBuildJobConfigSetsMLFlowCABundleFromInstanceName(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -296,7 +344,7 @@ func TestBuildJobConfigUsesBaseURL(t *testing.T) {
 		},
 	}
 	serviceConfig := &config.Config{
-		Sidecar: &config.SidecarConfig{BaseURL: "http://localhost:9090"},
+		Sidecar: &config.SidecarConfig{BaseURL: "http://localhost:9090", SidecarContainer: testSidecarConfig().SidecarContainer},
 	}
 
 	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, serviceConfig, nil)
@@ -337,7 +385,7 @@ func TestBuildJobConfigModelAuthSecretRefPresent(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -374,7 +422,7 @@ func TestBuildJobConfigModelAuthSecretRefEmptyWhenNil(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -418,7 +466,11 @@ func TestBuildJobConfigTestDataS3(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	serviceConfig := &config.Config{
+		Sidecar: testSidecarConfig(),
+		Service: &config.ServiceConfig{Init: config.ServiceInitConfig{TestDataTimeout: 45 * time.Minute}},
+	}
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, serviceConfig, nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -430,6 +482,9 @@ func TestBuildJobConfigTestDataS3(t *testing.T) {
 	}
 	if cfg.testDataS3.secretRef != "s3-secret" {
 		t.Fatalf("expected testDataS3SecretRef %q, got %q", "s3-secret", cfg.testDataS3.secretRef)
+	}
+	if cfg.testDataInitTimeout != 45*time.Minute {
+		t.Fatalf("expected testDataInitTimeout %v, got %v", 45*time.Minute, cfg.testDataInitTimeout)
 	}
 }
 
@@ -463,7 +518,7 @@ func TestBuildJobConfigAllowsNumExamplesOnly(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("expected no error for num_examples-only parameters, got %v", err)
 	}
@@ -501,7 +556,7 @@ func TestBuildJobConfigMissingRuntime(t *testing.T) {
 		},
 	}
 
-	_, err := buildJobConfig(evaluation, provider, &api.EvaluationBenchmarkConfig{}, 0, nil, nil)
+	_, err := buildJobConfig(evaluation, provider, &api.EvaluationBenchmarkConfig{}, 0, testJobServiceConfig(), nil)
 	if err == nil {
 		t.Fatalf("expected error for missing runtime")
 	}
@@ -527,7 +582,7 @@ func TestBuildJobConfigMissingAdapterImage(t *testing.T) {
 		},
 	}
 
-	_, err := buildJobConfig(evaluation, provider, nil, 0, nil, nil)
+	_, err := buildJobConfig(evaluation, provider, nil, 0, testJobServiceConfig(), nil)
 	if err == nil {
 		t.Fatalf("expected error for missing adapter image")
 	}
@@ -562,7 +617,7 @@ func TestBuildJobConfigAllowsEmptyBenchmarkConfig(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("expected no error for empty parameters, got %v", err)
 	}
@@ -616,7 +671,7 @@ func TestBuildJobConfigWithOCIExports(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -730,7 +785,7 @@ func TestBuildJobConfigUsesTenantNamespace(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -765,7 +820,7 @@ func TestBuildJobConfigEmptyTenantFallsBack(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -804,7 +859,7 @@ func TestBuildJobConfigKueueQueueNameFromHardwareProfile(t *testing.T) {
 		queueName:      "my-queue",
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, profile)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), profile)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -854,7 +909,7 @@ func TestBuildJobConfigKueueQueueNameFromHardwareConfig(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -903,7 +958,7 @@ func TestBuildJobConfigKueueQueueNameFromEvaluationQueue(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -949,7 +1004,7 @@ func TestBuildJobConfigUsesEvaluationHardwareConfigFallback(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -996,7 +1051,7 @@ func TestBuildJobConfigBenchmarkHardwareConfigTakesPrecedenceOverEvaluationFallb
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -1034,7 +1089,7 @@ func TestBuildJobConfigHardwareProfileQueueTakesPrecedenceOverEvaluationQueue(t 
 		queueName:      "profile-queue",
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, profile)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), profile)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -1070,7 +1125,7 @@ func TestBuildJobConfigBenchmarkHardwareConfigTakesPrecedenceOverEvaluationQueue
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -1137,7 +1192,7 @@ func TestBuildJobConfigHardwareProfileQueueTakesPrecedenceOverHardwareConfigQueu
 		queueName:      "profile-queue",
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, profile)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), profile)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -1172,7 +1227,7 @@ func TestBuildJobConfigKueueQueueNameWhenNoQueue(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -1202,7 +1257,7 @@ func TestBuildJobConfigBenchmarkIndexPropagated(t *testing.T) {
 	}
 
 	for _, idx := range []int{0, 1, 5} {
-		cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], idx, nil, nil)
+		cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], idx, testJobServiceConfig(), nil)
 		if err != nil {
 			t.Fatalf("buildJobConfig(%d) error: %v", idx, err)
 		}
@@ -1300,6 +1355,14 @@ func TestRewriteModelURLForSidecar(t *testing.T) {
 	}
 }
 
+func TestRewriteModelURLForSidecarDoesNotLeakMalformedModelURL(t *testing.T) {
+	secretURL := "https://user:secret-value@host%GG/v1"
+	_, err := rewriteModelURLForSidecar("http://localhost:8080", secretURL)
+	if err == nil || strings.Contains(err.Error(), "secret-value") || strings.Contains(err.Error(), secretURL) {
+		t.Fatalf("malformed model URL leaked through error: %v", err)
+	}
+}
+
 func TestBuildJobConfigModelURLPreservesRealURLAndTargetURL(t *testing.T) {
 	// buildJobConfig does NOT rewrite model.url — that happens in k8s_runtime.go
 	// via rewriteModelURLForSidecar. Verify modelTargetURL holds the real upstream URL
@@ -1321,7 +1384,7 @@ func TestBuildJobConfigModelURLPreservesRealURLAndTargetURL(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig: %v", err)
 	}
@@ -1435,7 +1498,7 @@ func TestBuildJobConfigGPU(t *testing.T) {
 	}
 
 	t.Run("gpu config and node_selector propagated when no queue", func(t *testing.T) {
-		cfg, err := buildJobConfig(newEvaluation(), gpuProvider, &benchmark, 0, nil, nil)
+		cfg, err := buildJobConfig(newEvaluation(), gpuProvider, &benchmark, 0, testJobServiceConfig(), nil)
 		if err != nil {
 			t.Fatalf("buildJobConfig: %v", err)
 		}
@@ -1455,7 +1518,7 @@ func TestBuildJobConfigGPU(t *testing.T) {
 			schedulingType: hardwareProfileSchedulingQueue,
 			queueName:      "gpu-queue",
 		}
-		cfg, err := buildJobConfig(newEvaluation(), gpuProvider, &benchmark, 0, nil, profile)
+		cfg, err := buildJobConfig(newEvaluation(), gpuProvider, &benchmark, 0, testJobServiceConfig(), profile)
 		if err != nil {
 			t.Fatalf("buildJobConfig: %v", err)
 		}
@@ -1476,7 +1539,7 @@ func TestBuildJobConfigGPU(t *testing.T) {
 	})
 
 	t.Run("nil gpu config leaves jobConfig without GPU", func(t *testing.T) {
-		cfg, err := buildJobConfig(newEvaluation(), cpuProvider, &benchmark, 0, nil, nil)
+		cfg, err := buildJobConfig(newEvaluation(), cpuProvider, &benchmark, 0, testJobServiceConfig(), nil)
 		if err != nil {
 			t.Fatalf("buildJobConfig: %v", err)
 		}
@@ -1544,7 +1607,7 @@ func TestBuildJobConfigDRA(t *testing.T) {
 		evaluation := newEvaluation(&api.BenchmarkHardwareConfig{
 			DRA: &api.HardwareDRAConfig{ResourceClaimTemplate: "gpu-claims"},
 		})
-		cfg, err := buildJobConfig(evaluation, gpuProvider, &evaluation.Benchmarks[0], 0, nil, nil)
+		cfg, err := buildJobConfig(evaluation, gpuProvider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 		if err != nil {
 			t.Fatalf("buildJobConfig: %v", err)
 		}
@@ -1570,7 +1633,7 @@ func TestBuildJobConfigDRA(t *testing.T) {
 		evaluation := newEvaluation(&api.BenchmarkHardwareConfig{
 			DRA: &api.HardwareDRAConfig{ResourceClaimTemplate: "request-template", ClaimName: "request-claim"},
 		})
-		cfg, err := buildJobConfig(evaluation, draProvider, &evaluation.Benchmarks[0], 0, nil, nil)
+		cfg, err := buildJobConfig(evaluation, draProvider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 		if err != nil {
 			t.Fatalf("buildJobConfig: %v", err)
 		}
@@ -1584,7 +1647,7 @@ func TestBuildJobConfigDRA(t *testing.T) {
 
 	t.Run("provider dra default retained when request sets nothing", func(t *testing.T) {
 		evaluation := newEvaluation(nil)
-		cfg, err := buildJobConfig(evaluation, draProvider, &evaluation.Benchmarks[0], 0, nil, nil)
+		cfg, err := buildJobConfig(evaluation, draProvider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 		if err != nil {
 			t.Fatalf("buildJobConfig: %v", err)
 		}
@@ -1600,7 +1663,7 @@ func TestBuildJobConfigDRA(t *testing.T) {
 		evaluation := newEvaluation(&api.BenchmarkHardwareConfig{
 			DRA: &api.HardwareDRAConfig{ResourceClaimTemplate: "request-template"},
 		})
-		cfg, err := buildJobConfig(evaluation, draProvider, &evaluation.Benchmarks[0], 0, nil, nil)
+		cfg, err := buildJobConfig(evaluation, draProvider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 		if err != nil {
 			t.Fatalf("buildJobConfig: %v", err)
 		}
@@ -1613,7 +1676,7 @@ func TestBuildJobConfigDRA(t *testing.T) {
 		evaluation := newEvaluation(&api.BenchmarkHardwareConfig{
 			GPU: &api.HardwareGPUConfig{Name: "nvidia.com/gpu", Count: 2},
 		})
-		cfg, err := buildJobConfig(evaluation, draProvider, &evaluation.Benchmarks[0], 0, nil, nil)
+		cfg, err := buildJobConfig(evaluation, draProvider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 		if err != nil {
 			t.Fatalf("buildJobConfig: %v", err)
 		}
@@ -1627,7 +1690,7 @@ func TestBuildJobConfigDRA(t *testing.T) {
 
 	t.Run("provider declaring both gpu and dra rejected", func(t *testing.T) {
 		evaluation := newEvaluation(nil)
-		_, err := buildJobConfig(evaluation, bothProvider, &evaluation.Benchmarks[0], 0, nil, nil)
+		_, err := buildJobConfig(evaluation, bothProvider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 		if err == nil {
 			t.Fatal("expected error for provider declaring both gpu and dra")
 		}
@@ -1638,7 +1701,7 @@ func TestBuildJobConfigDRA(t *testing.T) {
 			Queue: &api.QueueConfig{Kind: "kueue", Name: "gpu-queue"},
 			DRA:   &api.HardwareDRAConfig{ResourceClaimTemplate: "gpu-claims"},
 		})
-		cfg, err := buildJobConfig(evaluation, gpuProvider, &evaluation.Benchmarks[0], 0, nil, nil)
+		cfg, err := buildJobConfig(evaluation, gpuProvider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 		if err != nil {
 			t.Fatalf("buildJobConfig: %v", err)
 		}
@@ -1659,7 +1722,7 @@ func TestBuildJobConfigDRA(t *testing.T) {
 			gpuCount:       1,
 		}
 		evaluation := newEvaluation(nil)
-		_, err := buildJobConfig(evaluation, draProvider, &evaluation.Benchmarks[0], 0, nil, profile)
+		_, err := buildJobConfig(evaluation, draProvider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), profile)
 		if err == nil {
 			t.Fatal("expected error for hardware profile GPU combined with provider DRA default")
 		}
@@ -1733,7 +1796,7 @@ func TestBuildJobConfigImagePullPolicyAlways(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -1790,7 +1853,7 @@ func TestBuildJobConfigTestDataHF(t *testing.T) {
 		},
 	}
 
-	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, nil, nil)
+	cfg, err := buildJobConfig(evaluation, provider, &evaluation.Benchmarks[0], 0, testJobServiceConfig(), nil)
 	if err != nil {
 		t.Fatalf("buildJobConfig returned error: %v", err)
 	}
@@ -1836,21 +1899,25 @@ func TestPostProcessorPVCConfigs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("postProcessorPVCConfigs: %v", err)
 	}
-	if len(configs) != 2 {
-		t.Fatalf("got %d PVC configs, want 2", len(configs))
+	if len(configs) != 3 {
+		t.Fatalf("got %d PVC configs, want 3 references", len(configs))
 	}
 	want := []postProcessorPVCConfig{
 		{
+			sourceName: "calibration-0",
 			claimName:  "calibration-a",
 			volumeName: postProcessorCalibrationPVCVolumeNamePrefix + "0",
-			mountPath:  postProcessorCalibrationPVCMountPathPrefix + "/calibration-a",
+			mountPath:  shared.PostProcessorPVCRoot + "/calibration-0",
 		},
 		{
+			sourceName: "calibration-2",
 			claimName:  "calibration-b",
 			volumeName: postProcessorCalibrationPVCVolumeNamePrefix + "1",
-			mountPath:  postProcessorCalibrationPVCMountPathPrefix + "/calibration-b",
+			mountPath:  shared.PostProcessorPVCRoot + "/calibration-2",
 		},
 	}
+	want = append(want, postProcessorPVCConfig{sourceName: "calibration-3", claimName: "calibration-a", volumeName: postProcessorCalibrationPVCVolumeNamePrefix + "0", mountPath: shared.PostProcessorPVCRoot + "/calibration-3"})
+
 	for i := range want {
 		if configs[i] != want[i] {
 			t.Errorf("config[%d] = %#v, want %#v", i, configs[i], want[i])

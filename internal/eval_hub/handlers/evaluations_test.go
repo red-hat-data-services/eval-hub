@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,9 +12,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eval-hub/eval-hub/internal/eval_hub/abstractions"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/config"
+	"github.com/eval-hub/eval-hub/internal/eval_hub/constants"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/executioncontext"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/handlers"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/messages"
@@ -43,6 +46,7 @@ type fakeStorage struct {
 	lastStatusID        string
 	lastStatus          api.OverallState
 	job                 *api.EvaluationJobResource
+	getJobErr           error
 	deleteID            string
 	providerConfigs     map[string]api.ProviderResource
 	collectionConfigs   map[string]api.CollectionResource
@@ -56,6 +60,7 @@ func (f *fakeStorage) clone() *fakeStorage {
 		lastStatusID:        f.lastStatusID,
 		lastStatus:          f.lastStatus,
 		job:                 f.job,
+		getJobErr:           f.getJobErr,
 		deleteID:            f.deleteID,
 		providerConfigs:     f.providerConfigs,
 		collectionConfigs:   f.collectionConfigs,
@@ -84,6 +89,9 @@ func (f *fakeStorage) UpdateEvaluationJobStatus(id string, state api.OverallStat
 }
 
 func (f *fakeStorage) GetEvaluationJob(id string) (*api.EvaluationJobResource, error) {
+	if f.getJobErr != nil {
+		return nil, f.getJobErr
+	}
 	if f.workloadType != "" && (f.job == nil || workloads.TypeForJob(&f.job.EvaluationJobConfig) != f.workloadType) {
 		return nil, serviceerrors.NewServiceError(messages.ResourceNotFound, "Type", "evaluation job", "ResourceId", id)
 	}
@@ -964,30 +972,101 @@ func TestHandleUpdateEvaluation_PersistsResolvedSHAFromJobMeta(t *testing.T) {
 	}
 }
 
-func TestHandleUpdateEvaluationAcceptsValidPhase(t *testing.T) {
+func TestHandleUpdateEvaluationStartTime(t *testing.T) {
 	t.Parallel()
-	storage := &updateEvaluationStorage{fakeStorage: &fakeStorage{}}
+	received := time.Date(2026, 1, 2, 3, 4, 5, 0, time.FixedZone("request", 2*60*60))
+	for _, test := range []struct {
+		name        string
+		state       api.State
+		supplied    api.DateTime
+		want        api.DateTime
+		zeroContext bool
+	}{
+		{"running without start", api.StateRunning, "", "2026-01-02T01:04:05Z", false},
+		{"running with start", api.StateRunning, "2026-01-02T05:00:00+02:00", "2026-01-02T05:00:00+02:00", false},
+		{"running with zero context time", api.StateRunning, "", "", true},
+		{"supplied start with zero context time", api.StateRunning, "2026-01-02T05:00:00+02:00", "2026-01-02T05:00:00+02:00", true},
+		{"pending without start", api.StatePending, "", "", false},
+		{"completed without start", api.StateCompleted, "", "", false},
+		{"failed without start", api.StateFailed, "", "", false},
+		{"completed with start", api.StateCompleted, "2026-01-02T05:00:00+02:00", "2026-01-02T05:00:00+02:00", false},
+		{"failed with start", api.StateFailed, "2026-01-02T05:00:00+02:00", "2026-01-02T05:00:00+02:00", false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			storage := &updateEvaluationStorage{fakeStorage: &fakeStorage{job: &api.EvaluationJobResource{
+				EvaluationJobConfig: api.EvaluationJobConfig{Benchmarks: []api.EvaluationBenchmarkConfig{{
+					ProviderID: "p1", Ref: api.Ref{ID: "b1"},
+				}}},
+				Status: &api.EvaluationJobStatus{EvaluationJobState: api.EvaluationJobState{State: api.OverallStateRunning}},
+			}}}
+			validate := testhelpers.NewValidator(t)
+			logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+			h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil, nil)
+			event := &api.BenchmarkStatusEvent{ProviderID: "p1", ID: "b1", Status: test.state, StartedAt: test.supplied}
+			if test.state == api.StateRunning {
+				event.Phase = "running_evaluation"
+			}
+			body, err := json.Marshal(api.StatusEvent{BenchmarkStatusEvent: event})
+			if err != nil {
+				t.Fatal(err)
+			}
+			req := &updateEvaluationRequest{
+				bodyRequest: &bodyRequest{
+					MockRequest: createMockRequest("POST", "/api/v1/evaluations/jobs/job-start/events"),
+					body:        body,
+				},
+				pathValues: map[string]string{"job_id": "job-start"},
+			}
+			recorder := httptest.NewRecorder()
+			ctx := executioncontext.NewExecutionContext(context.Background(), "req-start", logger, "test-user", "test-tenant")
+			ctx.StartedAt = received
+			if test.zeroContext {
+				ctx.StartedAt = time.Time{}
+			}
+			before := time.Now().UTC().Truncate(time.Second)
+
+			h.HandleUpdateEvaluation(ctx, req, MockResponseWrapper{recorder: recorder})
+
+			if recorder.Code != 204 {
+				t.Fatalf("expected status 204, got %d body %s", recorder.Code, recorder.Body.String())
+			}
+			if storage.lastStatusEvent == nil || storage.lastStatusEvent.BenchmarkStatusEvent == nil {
+				t.Fatal("status event was not passed to storage")
+			}
+			got := storage.lastStatusEvent.BenchmarkStatusEvent.StartedAt
+			if test.zeroContext && test.supplied == "" {
+				started, err := api.DateTimeFromString(got)
+				if err != nil || started.Before(before) || started.After(time.Now()) {
+					t.Fatalf("invalid start fallback with zero context time %q: %v", got, err)
+				}
+			} else if got != test.want {
+				t.Fatalf("unexpected start time passed to storage: got %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestHandleUpdateEvaluationDoesNotStampStartAfterLookupFailure(t *testing.T) {
+	t.Parallel()
+	storage := &updateEvaluationStorage{fakeStorage: &fakeStorage{getJobErr: errors.New("temporary lookup failure")}}
 	validate := testhelpers.NewValidator(t)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	h := handlers.New(storage, validate, &fakeRuntime{}, nil, nil, nil, nil)
-
-	body := `{"benchmark_status_event":{"provider_id":"p1","id":"b1","status":"running","phase":"running_evaluation"}}`
-	req := &bodyRequest{
-		MockRequest: createMockRequest("POST", "/api/v1/evaluations/jobs/job-phase/events"),
-		body:        []byte(body),
+	body := []byte(`{"benchmark_status_event":{"provider_id":"collection-generation","id":"generate_collection","status":"running"}}`)
+	bodyReq := &bodyRequest{
+		MockRequest: createMockRequest("POST", "/api/v1/evaluations/jobs/job-generation/events"),
+		body:        body,
 	}
-	reqWithPath := &updateEvaluationRequest{
-		bodyRequest: req,
-		pathValues:  map[string]string{"job_id": "job-phase"},
-	}
+	req := &updateEvaluationRequest{bodyRequest: bodyReq, pathValues: map[string]string{constants.PathParameterJobID: "job-generation"}}
+	ctx := executioncontext.NewExecutionContext(context.Background(), "req-generation", logger, "test-user", "test-tenant")
+	ctx.StartedAt = time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
 	recorder := httptest.NewRecorder()
-	resp := MockResponseWrapper{recorder: recorder}
-	ctx := executioncontext.NewExecutionContext(context.Background(), "req-phase", logger, "test-user", "test-tenant")
-
-	h.HandleUpdateEvaluation(ctx, reqWithPath, resp)
-
-	if recorder.Code != 204 {
+	h.HandleUpdateEvaluation(ctx, req, MockResponseWrapper{recorder: recorder})
+	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("expected status 204, got %d body %s", recorder.Code, recorder.Body.String())
+	}
+	if got := storage.lastStatusEvent.BenchmarkStatusEvent.StartedAt; got != "" {
+		t.Fatalf("handler stamped a generation event after failed classification: %q", got)
 	}
 }
 

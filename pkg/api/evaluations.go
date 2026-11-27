@@ -163,7 +163,7 @@ type PassCriteria struct {
 type S3TestDataRef struct {
 	Bucket    string `json:"bucket" validate:"required"`
 	Key       string `json:"key" validate:"required"`
-	SecretRef string `json:"secret_ref" validate:"required"`
+	SecretRef string `json:"secret_ref" validate:"required,rfc1123_dns_subdomain"`
 }
 
 // PVCTestDataRef represents a PersistentVolumeClaim source for test data.
@@ -171,7 +171,7 @@ type S3TestDataRef struct {
 // read-only at /test_data in the adapter container. No init container is used.
 type PVCTestDataRef struct {
 	ClaimName string `json:"claim_name" mapstructure:"claim_name" validate:"required,rfc1123_dns_label"`
-	SubPath   string `json:"sub_path,omitempty" mapstructure:"sub_path,omitempty"`
+	SubPath   string `json:"sub_path,omitempty" mapstructure:"sub_path,omitempty" validate:"omitempty,pvc_sub_path"`
 }
 
 // GitTestDataRef represents a git repository source for test data.
@@ -353,6 +353,9 @@ type BenchmarkStatusEvent struct {
 	MLFlowRunID    string         `json:"mlflow_run_id,omitempty"`
 	LogsPath       string         `json:"logs_path,omitempty"`
 	JobMeta        *JobMeta       `json:"job_meta,omitempty"`
+	// CollectionGenerationProgress carries bounded runner progress for the internal generation workload.
+	// Storage replaces timestamps with service time and accepts only increasing sequence numbers.
+	CollectionGenerationProgress *CollectionGenerationProgressEvent `json:"collection_generation_progress,omitempty"`
 }
 
 type EvaluationJobState struct {
@@ -484,7 +487,8 @@ type EvaluationResource struct {
 
 type EvaluationJobStatus struct {
 	EvaluationJobState
-	Benchmarks []BenchmarkStatus `json:"benchmarks,omitempty"`
+	Benchmarks                   []BenchmarkStatus             `json:"benchmarks,omitempty"`
+	CollectionGenerationProgress *CollectionGenerationProgress `json:"collection_generation_progress,omitempty"`
 }
 
 // EvaluationJobResource represents evaluation job resource response

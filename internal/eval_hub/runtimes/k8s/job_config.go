@@ -4,11 +4,13 @@ package k8s
 import (
 	"fmt"
 	"os"
+	"path"
 	"strings"
+	"time"
 
 	"github.com/eval-hub/eval-hub/internal/eval_hub/config"
-	"github.com/eval-hub/eval-hub/internal/eval_hub/postprocessing"
 	"github.com/eval-hub/eval-hub/internal/eval_hub/runtimes/shared"
+	"github.com/eval-hub/eval-hub/internal/eval_hub/workloads"
 	"github.com/eval-hub/eval-hub/pkg/api"
 	"github.com/google/uuid"
 	corev1 "k8s.io/api/core/v1"
@@ -20,7 +22,6 @@ const (
 	defaultMemoryRequest        = "512Mi"
 	defaultCPULimit             = "1"
 	defaultMemoryLimit          = "2Gi"
-	defaultSidecarImage         = "eval-runtime-sidecar:latest"
 	defaultSidecarCPURequest    = "100m"
 	defaultSidecarMemoryRequest = "128Mi"
 	defaultSidecarCPULimit      = "200m"
@@ -77,14 +78,18 @@ type jobConfig struct {
 	mlflowWorkspace            string
 	ociCredentialsSecret       string
 	modelAuthSecretRef         string // user's real credentials secret mounted only in sidecar
+	generationWorkload         bool   // generation runner receives no real model Secret projection
 	modelInternalRefSecretName string // ephemeral internalModelRef secret mounted in adapter; empty when credential injection is not active
 	modelTargetURL             string // real model URL forwarded by the sidecar model proxy; empty for pre-recorded-data jobs
 	sidecarResources           corev1.ResourceRequirements
 	testDataS3                 s3TestDataConfig
 	testDataPVC                pvcTestDataConfig
 	postProcessorPVCs          []postProcessorPVCConfig
+	postProcessorSecrets       []string
+	postProcessorDownloads     []shared.NamedDataSource
 	testDataGit                gitTestDataConfig
 	testDataHF                 hfTestDataConfig
+	testDataInitTimeout        time.Duration
 	testDataInitImage          string
 	sidecarConfig              *config.SidecarConfig
 	// queueKind and queueName come from a queue-backed HardwareProfile when set,
@@ -106,6 +111,8 @@ type pvcTestDataConfig struct {
 }
 
 type postProcessorPVCConfig struct {
+	sourceName string
+	subPath    string
 	claimName  string
 	volumeName string
 	mountPath  string
@@ -125,34 +132,50 @@ type hfTestDataConfig struct {
 	secretRef string
 }
 
+// postProcessorPVCConfigs shares claim volumes while retaining each input's mount and subpath.
 func postProcessorPVCConfigs(evaluation *api.EvaluationJobResource) ([]postProcessorPVCConfig, error) {
-	if evaluation == nil || !postprocessing.IsPostProcessingJob(&evaluation.EvaluationJobConfig) {
-		return nil, nil
-	}
-
-	operations, err := postprocessing.OperationsFromJob(&evaluation.EvaluationJobConfig)
+	refs, err := postProcessorReferences(evaluation)
 	if err != nil {
-		return nil, fmt.Errorf("read post-processing calibration data refs: %w", err)
+		return nil, err
 	}
-	seenClaims := make(map[string]struct{})
+	seenClaims := make(map[string]string)
 	var configs []postProcessorPVCConfig
-	for _, ref := range operations.ConfidenceInterval.CalibrationDataRef {
-		if ref.PVC == nil {
+	for _, ref := range refs {
+		if ref.Source.PVC == nil {
 			continue
 		}
-		claimName := strings.TrimSpace(ref.PVC.ClaimName)
+		claimName := strings.TrimSpace(ref.Source.PVC.ClaimName)
 		if claimName == "" {
-			return nil, fmt.Errorf("post-processing calibration PVC claim_name is required")
+			return nil, fmt.Errorf("post-processing PVC claim_name is required")
 		}
-		if _, exists := seenClaims[claimName]; exists {
-			continue
+		volumeName, exists := seenClaims[claimName]
+		if !exists {
+			volumeName = fmt.Sprintf("%s%d", postProcessorCalibrationPVCVolumeNamePrefix, len(seenClaims))
+			seenClaims[claimName] = volumeName
 		}
-		seenClaims[claimName] = struct{}{}
-
+		// Kubernetes subpaths must stay within the claim, including for file inputs.
+		if subPath := ref.Source.PVC.SubPath; subPath != "" {
+			if path.IsAbs(subPath) {
+				return nil, fmt.Errorf("post-processing PVC sub_path must be relative")
+			}
+			for _, segment := range strings.Split(subPath, "/") {
+				if segment == "." || segment == ".." {
+					return nil, fmt.Errorf("post-processing PVC sub_path must not contain dot segments")
+				}
+			}
+		}
+		mountPath := shared.PostProcessorPVCRoot + "/" + ref.Name
+		// Preserve a selected file's basename for results data_config.path.
+		// Directory subpaths work identically; Kubernetes still selects the source.
+		if ref.Source.PVC.SubPath != "" {
+			mountPath += "/" + path.Base(ref.Source.PVC.SubPath)
+		}
 		configs = append(configs, postProcessorPVCConfig{
+			sourceName: ref.Name,
+			subPath:    ref.Source.PVC.SubPath,
 			claimName:  claimName,
-			volumeName: fmt.Sprintf("%s%d", postProcessorCalibrationPVCVolumeNamePrefix, len(configs)),
-			mountPath:  fmt.Sprintf("%s/%s", postProcessorCalibrationPVCMountPathPrefix, claimName),
+			volumeName: volumeName,
+			mountPath:  mountPath,
 		})
 	}
 	return configs, nil
@@ -169,7 +192,10 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 	cpuLimit := defaultIfEmpty(runtime.K8s.CPULimit, defaultCPULimit)
 	memoryLimit := defaultIfEmpty(runtime.K8s.MemoryLimit, defaultMemoryLimit)
 
-	if runtime.K8s.Image == "" {
+	if strings.TrimSpace(runtime.K8s.Image) == "" {
+		if workloads.TypeForJob(&evaluation.EvaluationJobConfig) == workloads.PostProcessing {
+			return nil, fmt.Errorf("EVALHUB_POST_PROCESSING_IMAGE is required for Kubernetes post-processing jobs")
+		}
 		return nil, fmt.Errorf("runtime adapter image is required")
 	}
 	// evaluation.Model.URL is optional (for pre-recorded datasets) and will have
@@ -257,6 +283,10 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 		testDataS3Key = strings.TrimSpace(benchmarkConfig.TestDataRef.S3.Key)
 		testDataS3SecretRef = strings.TrimSpace(benchmarkConfig.TestDataRef.S3.SecretRef)
 	}
+	var testDataInitTimeout time.Duration
+	if serviceConfig != nil && serviceConfig.Service != nil {
+		testDataInitTimeout = serviceConfig.Service.Init.TestDataTimeout
+	}
 
 	var testDataPVCClaimName, testDataPVCSubPath string
 	if benchmarkConfig.TestDataRef != nil && benchmarkConfig.TestDataRef.PVC != nil {
@@ -280,7 +310,16 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 		testDataHFSecretRef = strings.TrimSpace(benchmarkConfig.TestDataRef.HF.SecretRef)
 	}
 
+	// Prepare direct mounts, credential projections, and init inputs before building the pod.
 	postProcessorPVCs, err := postProcessorPVCConfigs(evaluation)
+	if err != nil {
+		return nil, err
+	}
+	postProcessorSecrets, err := postProcessorSecretNames(evaluation)
+	if err != nil {
+		return nil, err
+	}
+	downloads, err := postProcessorDownloadSources(evaluation)
 	if err != nil {
 		return nil, err
 	}
@@ -333,6 +372,7 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 		mlflowWorkspace:            mlflowWorkspace,
 		ociCredentialsSecret:       ociCredentialsSecret,
 		modelAuthSecretRef:         modelAuthSecretRef,
+		generationWorkload:         workloads.TypeForJob(&evaluation.EvaluationJobConfig) == workloads.CollectionGeneration,
 		modelInternalRefSecretName: modelInternalRefSecretName,
 		modelTargetURL:             modelTargetURL,
 		sidecarResources:           sidecarResources,
@@ -347,7 +387,9 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 			claimName: testDataPVCClaimName,
 			subPath:   testDataPVCSubPath,
 		},
-		postProcessorPVCs: postProcessorPVCs,
+		postProcessorPVCs:      postProcessorPVCs,
+		postProcessorSecrets:   postProcessorSecrets,
+		postProcessorDownloads: downloads,
 		testDataGit: gitTestDataConfig{
 			url:       testDataGitURL,
 			ref:       testDataGitRef,
@@ -360,6 +402,7 @@ func buildJobConfig(evaluation *api.EvaluationJobResource, provider *api.Provide
 			subPath:   testDataHFSubPath,
 			secretRef: testDataHFSecretRef,
 		},
+		testDataInitTimeout: testDataInitTimeout,
 	}
 	applyHardwareProfileResources(out, hardwareProfile)
 	effectiveHW := api.EffectiveHardwareConfig(benchmarkConfig, &evaluation.EvaluationJobConfig)
@@ -471,21 +514,19 @@ func applyQueueIfUnset(cfg *jobConfig, queue *api.QueueConfig) {
 }
 
 // sidecarImageAndResources returns image and resources for the sidecar container from
-// config.Sidecar.SidecarContainer (YAML key "sidecar"), or defaults when nil/empty.
-func sidecarImageAndResources(serviceConfig *config.Config) (image string, resources corev1.ResourceRequirements, err error) {
-	image = defaultSidecarImage
-	resources = defaultSidecarResourceRequirements()
-	if serviceConfig != nil && serviceConfig.Sidecar != nil && serviceConfig.Sidecar.SidecarContainer != nil {
-		sc := serviceConfig.Sidecar.SidecarContainer
-		if trimmed := strings.TrimSpace(sc.Image); trimmed != "" {
-			image = trimmed
-		}
-		if sc.Resources != nil {
-			resources, err = resourceRequirementsFromConfig(sc.Resources)
-			if err != nil {
-				return "", corev1.ResourceRequirements{}, err
-			}
-		}
+// sidecar.sidecar_container. The image must be injected; only resources have defaults.
+func sidecarImageAndResources(serviceConfig *config.Config) (string, corev1.ResourceRequirements, error) {
+	if serviceConfig == nil || serviceConfig.Sidecar == nil || serviceConfig.Sidecar.SidecarContainer == nil {
+		return "", corev1.ResourceRequirements{}, fmt.Errorf("sidecar.sidecar_container.image is required for Kubernetes jobs")
+	}
+	sc := serviceConfig.Sidecar.SidecarContainer
+	image := strings.TrimSpace(sc.Image)
+	if image == "" {
+		return "", corev1.ResourceRequirements{}, fmt.Errorf("sidecar.sidecar_container.image is required for Kubernetes jobs")
+	}
+	resources, err := resourceRequirementsFromConfig(sc.Resources)
+	if err != nil {
+		return "", corev1.ResourceRequirements{}, err
 	}
 	return image, resources, nil
 }
